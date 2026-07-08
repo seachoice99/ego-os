@@ -4,6 +4,10 @@ This document describes how the company functions: how it moves through its life
 
 This document does not describe employees, models, tools, UI, or implementation. It describes the operating mechanics of the company as an economic actor, independent of what performs the work.
 
+## Relationship to Task Execution
+
+Everything described in this document — a Decision Engine cycle, an Experiment Engine test, a step in the Digital Asset Lifecycle — is carried out as one or more Tasks under the existing Task Lifecycle (`architecture/002_TASK_LIFECYCLE.md`). Intake and Evaluation correspond to Planning and Staffing; Selection corresponds to Execution; Closure corresponds to Delivery and Memory Update. This document does not define a second execution path — it describes what the company chooses to do and why; `architecture/002` describes how any chosen work actually gets done.
+
 ## 1. Company Lifecycle
 
 The company matures through five sequential stages. A stage is not a mode the company switches into by itself — it is a level of trust the company has earned and the Owner has explicitly granted. The company can recommend that it is ready for the next stage and present evidence for that claim, but it cannot promote itself. Every transition is a Gate (see Section 2) that only the Owner can open.
@@ -177,6 +181,8 @@ Every experiment ends one of three ways: killed, because it failed its pre-regis
 ## 6. Capital Allocation
 
 Capital allocation only becomes meaningful once the company produces real profit, starting in Stage 3 and maturing through Stages 4 and 5. Profit is not spent as it arrives — it is split according to a standing allocation set by the Owner as part of the company's mandate, not re-decided by the company for itself each time.
+
+Every allocation below reads from and writes to a single Capital Ledger — the authoritative record of the company's cash, reserve, digital asset values, and investment positions. Cost and Token Accounting (`architecture/004_COST_AND_TOKEN_ACCOUNTING.md`) tracks operating expense as one line within this ledger, not a separate record of the company's financial position. Gate Control's exposure checks, the stage exit conditions in Section 1, and the splits described below all refer to this same ledger — there is exactly one record of what the company currently has, not one per subsystem.
 
 ### Reserve
 
