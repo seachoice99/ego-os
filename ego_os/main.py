@@ -15,10 +15,12 @@ app = FastAPI(title="Ego OS")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
-def _render_artifact(result_text: str) -> dict:
-    """Turn a specialist's raw text result into a labeled, rendered artifact
-    instead of a plain text blob, per the roadmap's v0.2 emphasis on
-    structured artifacts over inline text."""
+def _render_text_artifact(result_text: str) -> dict:
+    """Turn a specialist's raw text result into a typed, rendered artifact
+    instead of a plain text blob, per the roadmap's Structured Artifacts
+    capability: every task output -- the main text result and any
+    generated files -- is one durable, typed artifact record, not a
+    special-cased "Result" section plus a separate ad hoc file list."""
     html = md.markdown(
         result_text,
         extensions=["tables", "fenced_code", "sane_lists", "nl2br"],
@@ -31,7 +33,7 @@ def _render_artifact(result_text: str) -> dict:
         kind = "Checklist"
     else:
         kind = "Document"
-    return {"html": html, "kind": kind}
+    return {"type": "text", "kind": kind, "html": html}
 
 
 @app.on_event("startup")
@@ -66,12 +68,15 @@ def submit_task(request_text: str = Form(...)):
 def task_detail(request: Request, task_id: int):
     task = store.get_task(task_id)
     report = store.get_report(task_id)
-    result = _render_artifact(report["result_text"]) if report else None
-    qa_html = md.markdown(report["qa_note"], extensions=["sane_lists", "nl2br"]) if report else None
+    artifacts = None
+    qa_html = None
+    if report:
+        qa_html = md.markdown(report["qa_note"], extensions=["sane_lists", "nl2br"])
+        artifacts = [_render_text_artifact(report["result_text"])] + report["artifacts"]
     return templates.TemplateResponse(
         request,
         "task.html",
-        {"task": task, "report": report, "result": result, "qa_html": qa_html},
+        {"task": task, "report": report, "artifacts": artifacts, "qa_html": qa_html},
     )
 
 

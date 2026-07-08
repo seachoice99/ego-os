@@ -230,7 +230,7 @@ TOOLS = {
     "create_document": {
         "permission": "create_documents",
         "needs_context": ["task_id"],
-        "produces_artifact": True,
+        "produces_artifact": "document",
         "description": (
             'create_document(filename, content): generate a real, downloadable document artifact. '
             "filename must end in .md, .docx, or .pdf. content is plain text where lines starting "
@@ -242,7 +242,7 @@ TOOLS = {
     "create_spreadsheet": {
         "permission": "create_finance_reports",
         "needs_context": ["task_id"],
-        "produces_artifact": True,
+        "produces_artifact": "spreadsheet",
         "description": (
             'create_spreadsheet(filename, data): generate a real, downloadable .xlsx spreadsheet. '
             "filename must end in .xlsx. data is a JSON array of rows, each row a JSON array of "

@@ -118,15 +118,18 @@ def _execute_tool_request(text, match, permissions, task_id):
     request or a denied permission comes back as a tool result the
     specialist can react to, same as any other tool outcome. Returns
     (result_text, event_detail, artifact_or_None) -- artifact is filled in
-    only for a successful call to a tool marked produces_artifact, so the
-    UI can offer it as a download."""
+    only for a successful call to a tool marked produces_artifact, with an
+    explicit `type` (e.g. "document", "spreadsheet") taken from the tool's
+    registry entry rather than guessed from the filename, so the UI can
+    offer it as a typed, downloadable artifact."""
     tool_name = match.group(1)
     remainder = text[match.end():].strip()
     try:
         args = json.JSONDecoder().raw_decode(remainder)[0] if remainder else {}
         result = tools.call_tool(permissions, tool_name, context={"task_id": task_id}, **args)
         tool_def = tools.TOOLS.get(tool_name, {})
-        artifact = {"filename": args["filename"]} if tool_def.get("produces_artifact") and "filename" in args else None
+        artifact_type = tool_def.get("produces_artifact")
+        artifact = {"type": artifact_type, "filename": args["filename"]} if artifact_type and "filename" in args else None
         return result, f"Used tool '{tool_name}' with args {args}.", artifact
     except (tools.ToolError, ValueError, TypeError, json.JSONDecodeError) as exc:
         return f"Tool error: {exc}", f"Tool request for '{tool_name}' failed: {exc}", None

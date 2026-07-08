@@ -94,29 +94,27 @@
     </div>
   </section>
 
+  {% for artifact in artifacts %}
   <section class="artifact">
-    <div class="artifact-header"><span class="artifact-icon">&#128196;</span><h2>{{ result.kind }}</h2></div>
+    {% if artifact.type == "text" %}
+    <div class="artifact-header"><span class="artifact-icon">&#128196;</span><h2>{{ artifact.kind }}</h2></div>
     <div class="artifact-body markdown-body">
-      {{ result.html | safe }}
+      {{ artifact.html | safe }}
     </div>
-  </section>
-
-  {% if report.artifacts %}
-  <section class="artifact">
-    <div class="artifact-header"><span class="artifact-icon">&#128193;</span><h2>Generated Artifacts</h2></div>
+    {% else %}
+    <div class="artifact-header"><span class="artifact-icon">&#128193;</span><h2>{{ artifact.type | capitalize }}</h2></div>
     <div class="artifact-body">
       <ul class="files">
-        {% for file in report.artifacts %}
         <li class="file-item">
-          <span class="file-ext file-ext-{{ file.filename.split('.')[-1] }}">{{ file.filename.split('.')[-1] }}</span>
-          <span class="file-name">{{ file.filename }}</span>
-          <a class="file-download" href="/tasks/{{ task.id }}/artifacts/{{ file.filename }}">Download</a>
+          <span class="file-ext file-ext-{{ artifact.filename.split('.')[-1] }}">{{ artifact.filename.split('.')[-1] }}</span>
+          <span class="file-name">{{ artifact.filename }}</span>
+          <a class="file-download" href="/tasks/{{ task.id }}/artifacts/{{ artifact.filename }}">Download</a>
         </li>
-        {% endfor %}
       </ul>
     </div>
+    {% endif %}
   </section>
-  {% endif %}
+  {% endfor %}
 
   <section class="artifact">
     <div class="artifact-header"><span class="artifact-icon">&#128176;</span><h2>Cost &amp; Usage</h2></div>
