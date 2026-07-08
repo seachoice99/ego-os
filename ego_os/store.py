@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS reports (
     cost REAL NOT NULL DEFAULT 0,
     result_text TEXT,
     qa_note TEXT,
+    artifacts TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -75,6 +76,8 @@ def init_db():
         _ensure_column(conn, "tasks", "project_id", "INTEGER REFERENCES projects(id)")
         # Migration for databases created before the Tool Framework (v0.2).
         _ensure_column(conn, "employees", "permissions", "TEXT NOT NULL DEFAULT '[]'")
+        # Migration for databases created before Document Generation (v0.2).
+        _ensure_column(conn, "reports", "artifacts", "TEXT NOT NULL DEFAULT '[]'")
         conn.commit()
     finally:
         conn.close()
@@ -208,12 +211,12 @@ def get_task(task_id):
         conn.close()
 
 
-def create_report(task_id, employees_involved, timeline, input_tokens, output_tokens, cost, result_text, qa_note):
+def create_report(task_id, employees_involved, timeline, input_tokens, output_tokens, cost, result_text, qa_note, artifacts=None):
     conn = get_connection()
     try:
         conn.execute(
             "INSERT INTO reports (task_id, employees_involved, timeline, input_tokens, output_tokens, cost, "
-            "result_text, qa_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "result_text, qa_note, artifacts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id,
                 json.dumps(employees_involved),
@@ -223,6 +226,7 @@ def create_report(task_id, employees_involved, timeline, input_tokens, output_to
                 cost,
                 result_text,
                 qa_note,
+                json.dumps(artifacts or []),
             ),
         )
         conn.commit()
@@ -239,6 +243,7 @@ def get_report(task_id):
         report = dict(row)
         report["employees_involved"] = json.loads(report["employees_involved"])
         report["timeline"] = json.loads(report["timeline"])
+        report["artifacts"] = json.loads(report["artifacts"])
         return report
     finally:
         conn.close()

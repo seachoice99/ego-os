@@ -3,13 +3,13 @@ from pathlib import Path
 
 import markdown as md
 from dotenv import load_dotenv
-from fastapi import FastAPI, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 load_dotenv()
 
-from ego_os import employees, lifecycle, store  # noqa: E402
+from ego_os import employees, lifecycle, store, tools  # noqa: E402
 
 app = FastAPI(title="Ego OS")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -73,3 +73,12 @@ def task_detail(request: Request, task_id: int):
         "task.html",
         {"task": task, "report": report, "result": result, "qa_html": qa_html},
     )
+
+
+@app.get("/tasks/{task_id}/artifacts/{filename}")
+def download_artifact(task_id: int, filename: str):
+    task_dir = (tools.GENERATED_DIR / str(task_id)).resolve()
+    target = (task_dir / filename).resolve()
+    if not target.is_relative_to(task_dir) or not target.is_file():
+        raise HTTPException(status_code=404)
+    return FileResponse(target, filename=filename)

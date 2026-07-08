@@ -51,6 +51,17 @@
     .stat-box { border: 1px solid #e2e2e2; border-radius: 8px; padding: 0.8rem 1rem; background: #fff; }
     .stat-label { font-size: 0.78rem; color: #777; text-transform: uppercase; letter-spacing: 0.03em; }
     .stat-value { font-size: 1.1rem; font-weight: 600; margin-top: 0.2rem; }
+
+    /* Generated document artifacts (v0.2 Document Generation): real files
+       the Owner can download, not just inline text. */
+    .files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+    .file-item { display: flex; align-items: center; gap: 0.6rem; border: 1px solid #e2e2e2; border-radius: 8px; padding: 0.6rem 0.9rem; }
+    .file-ext { font-size: 0.72rem; font-weight: 700; color: #fff; background: #64748b; border-radius: 4px; padding: 0.15rem 0.4rem; text-transform: uppercase; }
+    .file-ext-pdf { background: #b91c1c; }
+    .file-ext-docx { background: #1d4ed8; }
+    .file-ext-md { background: #444; }
+    .file-name { flex: 1; }
+    .file-download { font-weight: 600; }
   </style>
 </head>
 <body>
@@ -88,6 +99,23 @@
       {{ result.html | safe }}
     </div>
   </section>
+
+  {% if report.artifacts %}
+  <section class="artifact">
+    <div class="artifact-header"><span class="artifact-icon">&#128193;</span><h2>Generated Artifacts</h2></div>
+    <div class="artifact-body">
+      <ul class="files">
+        {% for file in report.artifacts %}
+        <li class="file-item">
+          <span class="file-ext file-ext-{{ file.filename.split('.')[-1] }}">{{ file.filename.split('.')[-1] }}</span>
+          <span class="file-name">{{ file.filename }}</span>
+          <a class="file-download" href="/tasks/{{ task.id }}/artifacts/{{ file.filename }}">Download</a>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+  {% endif %}
 
   <section class="artifact">
     <div class="artifact-header"><span class="artifact-icon">&#128176;</span><h2>Cost &amp; Usage</h2></div>

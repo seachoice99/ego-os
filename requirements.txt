@@ -7,3 +7,5 @@ openai
 python-multipart
 markdown
 httpx
+python-docx
+fpdf2

@@ -56,7 +56,7 @@ def _tool_prompt_block(permissions):
     )
 
 
-def _run_specialist(specialist_id, title, mission, request_text, memory_context, permissions, feedback=None):
+def _run_specialist(specialist_id, title, mission, request_text, memory_context, permissions, task_id, feedback=None):
     """Run one specialist turn. If the specialist's first reply is a
     TOOL_REQUEST, the requested tool is executed exactly once and the
     specialist is asked to produce its final artifact using the tool's
@@ -78,6 +78,7 @@ def _run_specialist(specialist_id, title, mission, request_text, memory_context,
 
     text, in_tok, out_tok, cost = model_provider.complete(capability, prompt)
     tool_events = []
+    artifacts = []
 
     # The model is asked to reply with only a TOOL_REQUEST line, but in
     # practice sometimes prefixes it with a sentence of commentary -- scan
@@ -86,8 +87,10 @@ def _run_specialist(specialist_id, title, mission, request_text, memory_context,
         (line.strip() for line in text.splitlines() if line.strip().startswith("TOOL_REQUEST:")), None
     )
     if tool_line:
-        tool_result_text, event_detail = _execute_tool_request(tool_line, permissions)
+        tool_result_text, event_detail, artifact = _execute_tool_request(tool_line, permissions, task_id)
         tool_events.append({"step": "tool_use", "employee": specialist_id, "detail": event_detail})
+        if artifact:
+            artifacts.append(artifact)
 
         followup_prompt = (
             f"{prompt}\n\n"
@@ -99,23 +102,26 @@ def _run_specialist(specialist_id, title, mission, request_text, memory_context,
         out_tok += out_tok2
         cost += cost2
 
-    return text, in_tok, out_tok, cost, tool_events
+    return text, in_tok, out_tok, cost, tool_events, artifacts
 
 
-def _execute_tool_request(tool_request_line, permissions):
+def _execute_tool_request(tool_request_line, permissions, task_id):
     """Parse a 'TOOL_REQUEST: <name> <json args>' line and run it through
     the Tool Framework. Never raises -- a bad request or a denied
     permission comes back as a tool result the specialist can react to,
-    same as any other tool outcome."""
+    same as any other tool outcome. Returns (result_text, event_detail,
+    artifact_or_None) -- artifact is filled in only for a successful
+    create_document call, so the UI can offer it as a download."""
     try:
         _, rest = tool_request_line.split(":", 1)
         parts = rest.strip().split(" ", 1)
         tool_name = parts[0].strip()
         args = json.loads(parts[1]) if len(parts) > 1 and parts[1].strip() else {}
-        result = tools.call_tool(permissions, tool_name, **args)
-        return result, f"Used tool '{tool_name}' with args {args}."
+        result = tools.call_tool(permissions, tool_name, context={"task_id": task_id}, **args)
+        artifact = {"filename": args["filename"]} if tool_name == "create_document" and "filename" in args else None
+        return result, f"Used tool '{tool_name}' with args {args}.", artifact
     except (tools.ToolError, ValueError, TypeError, json.JSONDecodeError) as exc:
-        return f"Tool error: {exc}", f"Tool request '{tool_request_line}' failed: {exc}"
+        return f"Tool error: {exc}", f"Tool request '{tool_request_line}' failed: {exc}", None
 
 
 def _run_qa(request_text, draft_text):
@@ -160,8 +166,8 @@ def run(task_id: int, project_id: int, request_text: str):
     # Execution
     store.update_task_status(task_id, "execution")
     store.set_employee_status(specialist_id, "assigned")
-    draft_text, w_in, w_out, w_cost, w_tool_events = _run_specialist(
-        specialist_id, roster["title"], roster["mission"], request_text, memory_context, roster["permissions"]
+    draft_text, w_in, w_out, w_cost, w_tool_events, artifacts = _run_specialist(
+        specialist_id, roster["title"], roster["mission"], request_text, memory_context, roster["permissions"], task_id
     )
     total_in += w_in
     total_out += w_out
@@ -179,15 +185,16 @@ def run(task_id: int, project_id: int, request_text: str):
     timeline.append({"step": "qa", "employee": "qa", "detail": qa_note})
 
     if qa_note.strip().upper().startswith("REVISE"):
-        draft_text, r_in, r_out, r_cost, r_tool_events = _run_specialist(
+        draft_text, r_in, r_out, r_cost, r_tool_events, r_artifacts = _run_specialist(
             specialist_id, roster["title"], roster["mission"], request_text, memory_context,
-            roster["permissions"], feedback=qa_note,
+            roster["permissions"], task_id, feedback=qa_note,
         )
         total_in += r_in
         total_out += r_out
         total_cost += r_cost
         timeline.append({"step": "revision", "employee": specialist_id, "detail": "Produced a corrected draft based on QA feedback."})
         timeline.extend(r_tool_events)
+        artifacts.extend(r_artifacts)
 
         qa_note, q2_in, q2_out, q2_cost = _run_qa(request_text, draft_text)
         total_in += q2_in
@@ -212,6 +219,7 @@ def run(task_id: int, project_id: int, request_text: str):
         cost=total_cost,
         result_text=draft_text,
         qa_note=qa_note,
+        artifacts=artifacts,
     )
 
     # Memory Update
