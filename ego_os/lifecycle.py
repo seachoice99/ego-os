@@ -1,7 +1,10 @@
 import json
+import re
 from datetime import date
 
 from ego_os import model_provider, store, tools
+
+_TOOL_REQUEST_RE = re.compile(r"TOOL_REQUEST:\s*(\S+)")
 
 
 def _today_line():
@@ -82,20 +85,23 @@ def _run_specialist(specialist_id, title, mission, request_text, memory_context,
     artifacts = []
 
     # The model is asked to reply with only a TOOL_REQUEST line, but in
-    # practice sometimes prefixes it with a sentence of commentary -- scan
-    # every line rather than trusting the reply is exactly one line.
-    tool_line = next(
-        (line.strip() for line in text.splitlines() if line.strip().startswith("TOOL_REQUEST:")), None
-    )
-    if tool_line:
-        tool_result_text, event_detail, artifact = _execute_tool_request(tool_line, permissions, task_id)
+    # practice it sometimes prefixes commentary, spreads the JSON args
+    # across multiple physical lines, or appends trailing text after the
+    # closing brace -- found live in production (a "content" argument
+    # containing a real multi-line script broke a strict single-line
+    # json.loads with "Extra data"). Search the whole reply for the marker
+    # and parse only the first valid JSON value after it, ignoring anything
+    # before or after that one value.
+    match = _TOOL_REQUEST_RE.search(text)
+    if match:
+        tool_result_text, event_detail, artifact = _execute_tool_request(text, match, permissions, task_id)
         tool_events.append({"step": "tool_use", "employee": specialist_id, "detail": event_detail})
         if artifact:
             artifacts.append(artifact)
 
         followup_prompt = (
             f"{prompt}\n\n"
-            f"You requested: {tool_line}\nTool result:\n{tool_result_text}\n\n"
+            f"You requested: {match.group(0)}\nTool result:\n{tool_result_text}\n\n"
             "Now produce the final artifact for the Owner using this result. Do not request another tool."
         )
         text, in_tok2, out_tok2, cost2 = model_provider.complete(capability, followup_prompt)
@@ -106,24 +112,24 @@ def _run_specialist(specialist_id, title, mission, request_text, memory_context,
     return text, in_tok, out_tok, cost, tool_events, artifacts
 
 
-def _execute_tool_request(tool_request_line, permissions, task_id):
-    """Parse a 'TOOL_REQUEST: <name> <json args>' line and run it through
-    the Tool Framework. Never raises -- a bad request or a denied
-    permission comes back as a tool result the specialist can react to,
-    same as any other tool outcome. Returns (result_text, event_detail,
-    artifact_or_None) -- artifact is filled in only for a successful
-    create_document call, so the UI can offer it as a download."""
+def _execute_tool_request(text, match, permissions, task_id):
+    """Parse a 'TOOL_REQUEST: <name> <json args>' marker found anywhere in
+    text and run it through the Tool Framework. Never raises -- a bad
+    request or a denied permission comes back as a tool result the
+    specialist can react to, same as any other tool outcome. Returns
+    (result_text, event_detail, artifact_or_None) -- artifact is filled in
+    only for a successful call to a tool marked produces_artifact, so the
+    UI can offer it as a download."""
+    tool_name = match.group(1)
+    remainder = text[match.end():].strip()
     try:
-        _, rest = tool_request_line.split(":", 1)
-        parts = rest.strip().split(" ", 1)
-        tool_name = parts[0].strip()
-        args = json.loads(parts[1]) if len(parts) > 1 and parts[1].strip() else {}
+        args = json.JSONDecoder().raw_decode(remainder)[0] if remainder else {}
         result = tools.call_tool(permissions, tool_name, context={"task_id": task_id}, **args)
         tool_def = tools.TOOLS.get(tool_name, {})
         artifact = {"filename": args["filename"]} if tool_def.get("produces_artifact") and "filename" in args else None
         return result, f"Used tool '{tool_name}' with args {args}.", artifact
     except (tools.ToolError, ValueError, TypeError, json.JSONDecodeError) as exc:
-        return f"Tool error: {exc}", f"Tool request '{tool_request_line}' failed: {exc}", None
+        return f"Tool error: {exc}", f"Tool request for '{tool_name}' failed: {exc}", None
 
 
 def _run_qa(request_text, draft_text):
