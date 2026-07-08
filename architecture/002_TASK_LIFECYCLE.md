@@ -17,6 +17,7 @@
 
 5. Execution
    - employees perform subtasks.
+   - subtasks may depend on one another and may include review checkpoints between assigned employees before the task proceeds to QA.
    - all significant actions create log events.
 
 6. QA

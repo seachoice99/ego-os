@@ -4,6 +4,15 @@
 
 LinkedIn + Jira + Mission Control for a digital AI company.
 
+## Primary Owner-Facing Surfaces
+
+Ego OS has exactly two primary Owner-facing surfaces:
+
+1. Strategy / Command Interface — where the Owner sets goals, clarifies requirements, approves gated decisions, and receives executive summaries. This is the Owner's only channel to the company — it may resemble chat, but it is a command interface into a single operating layer, not a channel to individual employees.
+2. Operations Dashboard — where the Owner observes and manages the company without reading every conversation: projects, tasks, employee assignments, reports, budgets, and pending approvals for anything Gate Control has flagged as requiring confirmation.
+
+Both surfaces are first-class across desktop and mobile from the start. Mobile carries a reduced scope (issuing commands, approving gated actions, monitoring status, receiving notifications) rather than full dashboard depth, but it is part of the product's intended shape, not a later addition.
+
 ## Core screens
 
 1. Dashboard

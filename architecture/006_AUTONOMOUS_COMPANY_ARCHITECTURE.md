@@ -81,6 +81,10 @@ An action that is irreversible, or exceeds the approved exposure, or creates a n
 - **Requires Owner confirmation**: entering a new asset class; any allocation that would breach the Owner's risk profile; large one-off allocations (acquiring a business, a property, a significant position); any change to the risk profile itself.
 - **Prohibited**: allocating capital in a way that serves the company's own continuity ahead of the Owner's interest; valuing illiquid holdings using only the company's own internal estimate, without independent reconciliation where one is available.
 
+### Relationship to Autonomy Mode
+
+Autonomy Mode (Assistant / Autopilot / Director) governs how the Owner is engaged for a given class of decision — asked first, notified after, or left uninterrupted. It never changes what Gate Control classifies as autonomous, confirmation-required, or prohibited for the company's current stage. A higher autonomy mode can reduce how often the Owner is consulted for actions Gate Control already allows autonomously — it cannot make a confirmation-required or prohibited action autonomous.
+
 ## 3. Decision Engine
 
 The Decision Engine is the general mechanism the company uses to decide what to do next, at any stage — whether the decision is which digital asset to build, which monetization test to run, or how to rebalance capital. It always runs the same four steps.
