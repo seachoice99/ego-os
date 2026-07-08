@@ -16,6 +16,8 @@ from pathlib import Path
 import httpx
 from docx import Document
 from fpdf import FPDF
+from openpyxl import Workbook
+from openpyxl.styles import Font
 
 REPO_ROOT = Path(__file__).parent.parent.resolve()
 GENERATED_DIR = Path(__file__).parent / "generated"
@@ -174,6 +176,32 @@ def _create_document(filename: str, content: str, task_id: int) -> str:
     return f"created document artifact '{filename}', downloadable from the task's report."
 
 
+def _create_spreadsheet(filename: str, data, task_id: int) -> str:
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise ToolError("filename must not contain path separators")
+    if Path(filename).suffix.lower() != ".xlsx":
+        raise ToolError(f"unsupported spreadsheet format '{filename}' -- use .xlsx")
+    if not isinstance(data, list) or not data or not all(isinstance(row, list) for row in data):
+        raise ToolError('data must be a non-empty list of rows, e.g. [["Header1","Header2"],["a","b"]]')
+
+    task_dir = GENERATED_DIR / str(task_id)
+    task_dir.mkdir(parents=True, exist_ok=True)
+    target = task_dir / filename
+
+    wb = Workbook()
+    ws = wb.active
+    for row in data:
+        ws.append(row)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    for column_cells in ws.columns:
+        widest = max((len(str(cell.value)) for cell in column_cells if cell.value is not None), default=10)
+        ws.column_dimensions[column_cells[0].column_letter].width = min(widest + 2, 60)
+    wb.save(target)
+
+    return f"created spreadsheet artifact '{filename}' with {len(data)} rows, downloadable from the task's report."
+
+
 TOOLS = {
     "read_repository_file": {
         "permission": "read_repository",
@@ -202,6 +230,7 @@ TOOLS = {
     "create_document": {
         "permission": "create_documents",
         "needs_context": ["task_id"],
+        "produces_artifact": True,
         "description": (
             'create_document(filename, content): generate a real, downloadable document artifact. '
             "filename must end in .md, .docx, or .pdf. content is plain text where lines starting "
@@ -209,6 +238,18 @@ TOOLS = {
             'Args as JSON: {"filename": "name.pdf", "content": "# Title\\n\\nBody text..."}'
         ),
         "fn": _create_document,
+    },
+    "create_spreadsheet": {
+        "permission": "create_finance_reports",
+        "needs_context": ["task_id"],
+        "produces_artifact": True,
+        "description": (
+            'create_spreadsheet(filename, data): generate a real, downloadable .xlsx spreadsheet. '
+            "filename must end in .xlsx. data is a JSON array of rows, each row a JSON array of "
+            "cell values; the first row is treated as the header and rendered bold. "
+            'Args as JSON: {"filename": "report.xlsx", "data": [["Employee","Cost"],["writer",0.0123]]}'
+        ),
+        "fn": _create_spreadsheet,
     },
 }
 

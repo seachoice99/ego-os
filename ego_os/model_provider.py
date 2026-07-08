@@ -10,6 +10,7 @@ _CAPABILITY_MODELS = {
     "delegation": "anthropic/claude-haiku-4.5",
     "synthesis": "anthropic/claude-haiku-4.5",
     "coding": "anthropic/claude-haiku-4.5",
+    "cost_accounting": "anthropic/claude-haiku-4.5",
 }
 
 _PRICE_PER_TOKEN = {

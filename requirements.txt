@@ -9,3 +9,4 @@ markdown
 httpx
 python-docx
 fpdf2
+openpyxl

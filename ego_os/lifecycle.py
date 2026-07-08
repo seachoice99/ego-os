@@ -17,6 +17,7 @@ EXECUTION_CAPABILITY = {
     "writer": "business_communication",
     "researcher": "synthesis",
     "coder": "coding",
+    "cfo": "cost_accounting",
 }
 
 
@@ -118,7 +119,8 @@ def _execute_tool_request(tool_request_line, permissions, task_id):
         tool_name = parts[0].strip()
         args = json.loads(parts[1]) if len(parts) > 1 and parts[1].strip() else {}
         result = tools.call_tool(permissions, tool_name, context={"task_id": task_id}, **args)
-        artifact = {"filename": args["filename"]} if tool_name == "create_document" and "filename" in args else None
+        tool_def = tools.TOOLS.get(tool_name, {})
+        artifact = {"filename": args["filename"]} if tool_def.get("produces_artifact") and "filename" in args else None
         return result, f"Used tool '{tool_name}' with args {args}.", artifact
     except (tools.ToolError, ValueError, TypeError, json.JSONDecodeError) as exc:
         return f"Tool error: {exc}", f"Tool request '{tool_request_line}' failed: {exc}", None
