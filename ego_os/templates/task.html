@@ -69,7 +69,7 @@
   <p><a href="/">&larr; back to dashboard</a></p>
   <h1>Task #{{ task.id }}</h1>
   <p class="request">{{ task.request_text }}</p>
-  <p>Status: <strong>{{ task.status }}</strong></p>
+  <p>Project: <strong>{{ task.project_name or 'General' }}</strong> &middot; Status: <strong>{{ task.status }}</strong></p>
 
   {% if report %}
   <section class="artifact">

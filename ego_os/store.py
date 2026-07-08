@@ -99,6 +99,35 @@ def ensure_default_project():
         conn.close()
 
 
+def create_project(name, vision=None):
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "INSERT INTO projects (name, vision) VALUES (?, ?)",
+            (name, vision),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def get_projects():
+    conn = get_connection()
+    try:
+        return conn.execute("SELECT * FROM projects ORDER BY id").fetchall()
+    finally:
+        conn.close()
+
+
+def get_project(project_id):
+    conn = get_connection()
+    try:
+        return conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    finally:
+        conn.close()
+
+
 def upsert_employee(id, name, title, department, mission, required_capabilities, permissions, version):
     conn = get_connection()
     try:
@@ -198,7 +227,10 @@ def update_task_status(task_id, status):
 def get_tasks():
     conn = get_connection()
     try:
-        return conn.execute("SELECT * FROM tasks ORDER BY id DESC").fetchall()
+        return conn.execute(
+            "SELECT t.*, p.name AS project_name FROM tasks t "
+            "LEFT JOIN projects p ON t.project_id = p.id ORDER BY t.id DESC"
+        ).fetchall()
     finally:
         conn.close()
 
@@ -206,7 +238,11 @@ def get_tasks():
 def get_task(task_id):
     conn = get_connection()
     try:
-        return conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        return conn.execute(
+            "SELECT t.*, p.name AS project_name FROM tasks t "
+            "LEFT JOIN projects p ON t.project_id = p.id WHERE t.id = ?",
+            (task_id,),
+        ).fetchone()
     finally:
         conn.close()
 

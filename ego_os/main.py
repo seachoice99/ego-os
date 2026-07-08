@@ -51,14 +51,22 @@ def home(request: Request):
         {
             "employees": store.get_employees(),
             "tasks": store.get_tasks(),
+            "projects": store.get_projects(),
             "total_cost": store.get_total_cost(),
         },
     )
 
 
+@app.post("/projects")
+def submit_project(name: str = Form(...), vision: str = Form("")):
+    store.create_project(name.strip(), vision.strip() or None)
+    return RedirectResponse(url="/", status_code=303)
+
+
 @app.post("/tasks")
-def submit_task(request_text: str = Form(...)):
-    project_id = store.ensure_default_project()
+def submit_task(request_text: str = Form(...), project_id: int = Form(...)):
+    if store.get_project(project_id) is None:
+        project_id = store.ensure_default_project()
     task_id = store.create_task(request_text, project_id)
     lifecycle.run(task_id, project_id, request_text)
     return RedirectResponse(url=f"/tasks/{task_id}", status_code=303)
