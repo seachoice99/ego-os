@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Ego OS — Task #{{ task.id }}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 { margin-bottom: 0.2rem; }
+    .request { color: #444; font-style: italic; margin-top: 0; }
+    section { margin-top: 1.5rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+    .result { white-space: pre-wrap; background: #f7f7f7; padding: 1rem; border-radius: 6px; }
+    .qa-pass { color: #15803d; font-weight: 600; }
+    .qa-revise { color: #b45309; font-weight: 600; }
+    a { color: #1d4ed8; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <p><a href="/">&larr; back to dashboard</a></p>
+  <h1>Task #{{ task.id }}</h1>
+  <p class="request">{{ task.request_text }}</p>
+  <p>Status: <strong>{{ task.status }}</strong></p>
+
+  {% if report %}
+  <section>
+    <h2>Timeline</h2>
+    <table>
+      <tr><th>Step</th><th>Employee</th><th>Detail</th></tr>
+      {% for event in report.timeline %}
+      <tr>
+        <td>{{ event.step }}</td>
+        <td>{{ event.employee }}</td>
+        <td>{{ event.detail }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+
+  <section>
+    <h2>QA Review</h2>
+    <p class="{{ 'qa-pass' if report.qa_note.startswith('PASS') else 'qa-revise' }}">{{ report.qa_note }}</p>
+  </section>
+
+  <section>
+    <h2>Result</h2>
+    <div class="result">{{ report.result_text }}</div>
+  </section>
+
+  <section>
+    <h2>Cost &amp; Usage</h2>
+    <table>
+      <tr><th>Employees involved</th><td>{{ report.employees_involved | join(', ') }}</td></tr>
+      <tr><th>Input tokens</th><td>{{ report.input_tokens }}</td></tr>
+      <tr><th>Output tokens</th><td>{{ report.output_tokens }}</td></tr>
+      <tr><th>Cost</th><td>${{ "%.6f" | format(report.cost) }}</td></tr>
+    </table>
+  </section>
+  {% else %}
+  <p>Report not yet available.</p>
+  {% endif %}
+</body>
+</html>

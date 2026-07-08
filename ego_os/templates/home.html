@@ -1,0 +1,69 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Ego OS</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 { margin-bottom: 0.2rem; }
+    .subtitle { color: #666; margin-top: 0; }
+    section { margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; }
+    .status-idle { color: #666; }
+    .status-assigned { color: #b45309; font-weight: 600; }
+    .status-delivered { color: #15803d; }
+    textarea { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 1rem; padding: 0.6rem; }
+    button { margin-top: 0.5rem; padding: 0.5rem 1.2rem; font-size: 1rem; cursor: pointer; }
+    a { color: #1d4ed8; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <h1>Ego OS</h1>
+  <p class="subtitle">Autonomous Digital Company</p>
+
+  <section>
+    <h2>Assign work to the company</h2>
+    <form method="post" action="/tasks">
+      <textarea name="request_text" rows="3" placeholder="Describe what you'd like the company to do..." required></textarea>
+      <br>
+      <button type="submit">Submit</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Employees</h2>
+    <table>
+      <tr><th>Name</th><th>Title</th><th>Department</th><th>Status</th></tr>
+      {% for e in employees %}
+      <tr>
+        <td>{{ e.name }}</td>
+        <td>{{ e.title }}</td>
+        <td>{{ e.department }}</td>
+        <td class="status-{{ e.status }}">{{ e.status }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+
+  <section>
+    <h2>Tasks</h2>
+    {% if tasks %}
+    <table>
+      <tr><th>ID</th><th>Request</th><th>Status</th><th></th></tr>
+      {% for t in tasks %}
+      <tr>
+        <td>{{ t.id }}</td>
+        <td>{{ t.request_text }}</td>
+        <td class="status-{{ t.status }}">{{ t.status }}</td>
+        <td><a href="/tasks/{{ t.id }}">view report</a></td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p>No tasks submitted yet.</p>
+    {% endif %}
+  </section>
+</body>
+</html>
