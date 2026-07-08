@@ -6,6 +6,8 @@ This is the primary implementation plan for Ego OS. It sequences work that is al
 
 **Status legend:** ✅ done · 🔜 next · ⏳ planned, not yet started
 
+**Released versions:** see `CHANGELOG.md` for the full change history and `RELEASE_NOTES_v0.2.md` for v0.2's detailed capabilities/bugs/limitations/metrics.
+
 ---
 
 ## ✅ v0.1 — Working Company
