@@ -5,3 +5,4 @@ pyyaml
 python-dotenv
 openai
 python-multipart
+markdown
