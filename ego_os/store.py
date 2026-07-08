@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS employees (
     department TEXT NOT NULL,
     mission TEXT NOT NULL,
     required_capabilities TEXT NOT NULL DEFAULT '[]',
+    permissions TEXT NOT NULL DEFAULT '[]',
     version TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'idle'
 );
@@ -72,6 +73,8 @@ def init_db():
         # Migrations for databases created before Phase 1.
         _ensure_column(conn, "employees", "required_capabilities", "TEXT NOT NULL DEFAULT '[]'")
         _ensure_column(conn, "tasks", "project_id", "INTEGER REFERENCES projects(id)")
+        # Migration for databases created before the Tool Framework (v0.2).
+        _ensure_column(conn, "employees", "permissions", "TEXT NOT NULL DEFAULT '[]'")
         conn.commit()
     finally:
         conn.close()
@@ -93,22 +96,23 @@ def ensure_default_project():
         conn.close()
 
 
-def upsert_employee(id, name, title, department, mission, required_capabilities, version):
+def upsert_employee(id, name, title, department, mission, required_capabilities, permissions, version):
     conn = get_connection()
     try:
         capabilities_json = json.dumps(required_capabilities)
+        permissions_json = json.dumps(permissions)
         existing = conn.execute("SELECT id FROM employees WHERE id = ?", (id,)).fetchone()
         if existing:
             conn.execute(
                 "UPDATE employees SET name=?, title=?, department=?, mission=?, required_capabilities=?, "
-                "version=? WHERE id=?",
-                (name, title, department, mission, capabilities_json, version, id),
+                "permissions=?, version=? WHERE id=?",
+                (name, title, department, mission, capabilities_json, permissions_json, version, id),
             )
         else:
             conn.execute(
-                "INSERT INTO employees (id, name, title, department, mission, required_capabilities, version, status) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'idle')",
-                (id, name, title, department, mission, capabilities_json, version),
+                "INSERT INTO employees (id, name, title, department, mission, required_capabilities, "
+                "permissions, version, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'idle')",
+                (id, name, title, department, mission, capabilities_json, permissions_json, version),
             )
         conn.commit()
     finally:
@@ -132,14 +136,15 @@ def get_employee(id):
 
 
 def get_roster_summary(ids):
-    """Return id/title/mission/required_capabilities for the given employee
-    ids, with required_capabilities parsed back into a list -- the shape
-    Orchestrator needs to reason about who to staff."""
+    """Return id/title/mission/required_capabilities/permissions for the
+    given employee ids, with the JSON columns parsed back into lists -- the
+    shape Orchestrator needs to reason about who to staff, and the shape the
+    Tool Framework needs to know what a chosen specialist may access."""
     conn = get_connection()
     try:
         placeholders = ",".join("?" for _ in ids)
         rows = conn.execute(
-            f"SELECT id, title, mission, required_capabilities FROM employees WHERE id IN ({placeholders})",
+            f"SELECT id, title, mission, required_capabilities, permissions FROM employees WHERE id IN ({placeholders})",
             ids,
         ).fetchall()
         return [
@@ -148,6 +153,7 @@ def get_roster_summary(ids):
                 "title": r["title"],
                 "mission": r["mission"],
                 "required_capabilities": json.loads(r["required_capabilities"]),
+                "permissions": json.loads(r["permissions"]),
             }
             for r in rows
         ]

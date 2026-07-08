@@ -21,5 +21,6 @@ def sync_from_registry():
             department=definition["department"],
             mission=definition["mission"],
             required_capabilities=definition.get("required_capabilities", []),
+            permissions=definition.get("permissions", []),
             version=str(definition["version"]),
         )

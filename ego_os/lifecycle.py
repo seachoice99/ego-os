@@ -1,4 +1,6 @@
-from ego_os import model_provider, store
+import json
+
+from ego_os import model_provider, store, tools
 
 # Which capability a specialist uses to actually produce work. Orchestrator
 # only ever sees required_capabilities from the registry; this mapping is
@@ -6,6 +8,7 @@ from ego_os import model_provider, store
 EXECUTION_CAPABILITY = {
     "writer": "business_communication",
     "researcher": "synthesis",
+    "coder": "coding",
 }
 
 
@@ -31,7 +34,26 @@ def _select_specialist(request_text):
     return "writer", in_tok, out_tok, cost  # safe default if the reply was ambiguous
 
 
-def _run_specialist(specialist_id, title, mission, request_text, memory_context, feedback=None):
+def _tool_prompt_block(permissions):
+    available = tools.available_tools(permissions)
+    if not available:
+        return ""
+    tool_lines = "\n".join(f"- {t['description']}" for t in available)
+    return (
+        "\n\nYou have access to the following tools:\n"
+        f"{tool_lines}\n\n"
+        "If you need one to complete this request, respond with EXACTLY one line in the form:\n"
+        "TOOL_REQUEST: <tool_name> <JSON args>\n"
+        "Otherwise, produce the final artifact directly, with no TOOL_REQUEST line."
+    )
+
+
+def _run_specialist(specialist_id, title, mission, request_text, memory_context, permissions, feedback=None):
+    """Run one specialist turn. If the specialist's first reply is a
+    TOOL_REQUEST, the requested tool is executed exactly once and the
+    specialist is asked to produce its final artifact using the tool's
+    result -- capped at one tool call per turn, the same bounded-retry
+    shape already used for QA revisions."""
     capability = EXECUTION_CAPABILITY[specialist_id]
     context_block = ""
     if memory_context:
@@ -42,8 +64,49 @@ def _run_specialist(specialist_id, title, mission, request_text, memory_context,
         f"{context_block}"
         f"Fulfil this request from the Owner as a clear, complete artifact:\n\n{request_text}"
         f"{revision_block}"
+        f"{_tool_prompt_block(permissions)}"
     )
-    return model_provider.complete(capability, prompt)
+
+    text, in_tok, out_tok, cost = model_provider.complete(capability, prompt)
+    tool_events = []
+
+    # The model is asked to reply with only a TOOL_REQUEST line, but in
+    # practice sometimes prefixes it with a sentence of commentary -- scan
+    # every line rather than trusting the reply is exactly one line.
+    tool_line = next(
+        (line.strip() for line in text.splitlines() if line.strip().startswith("TOOL_REQUEST:")), None
+    )
+    if tool_line:
+        tool_result_text, event_detail = _execute_tool_request(tool_line, permissions)
+        tool_events.append({"step": "tool_use", "employee": specialist_id, "detail": event_detail})
+
+        followup_prompt = (
+            f"{prompt}\n\n"
+            f"You requested: {tool_line}\nTool result:\n{tool_result_text}\n\n"
+            "Now produce the final artifact for the Owner using this result. Do not request another tool."
+        )
+        text, in_tok2, out_tok2, cost2 = model_provider.complete(capability, followup_prompt)
+        in_tok += in_tok2
+        out_tok += out_tok2
+        cost += cost2
+
+    return text, in_tok, out_tok, cost, tool_events
+
+
+def _execute_tool_request(tool_request_line, permissions):
+    """Parse a 'TOOL_REQUEST: <name> <json args>' line and run it through
+    the Tool Framework. Never raises -- a bad request or a denied
+    permission comes back as a tool result the specialist can react to,
+    same as any other tool outcome."""
+    try:
+        _, rest = tool_request_line.split(":", 1)
+        parts = rest.strip().split(" ", 1)
+        tool_name = parts[0].strip()
+        args = json.loads(parts[1]) if len(parts) > 1 and parts[1].strip() else {}
+        result = tools.call_tool(permissions, tool_name, **args)
+        return result, f"Used tool '{tool_name}' with args {args}."
+    except (tools.ToolError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        return f"Tool error: {exc}", f"Tool request '{tool_request_line}' failed: {exc}"
 
 
 def _run_qa(request_text, draft_text):
@@ -87,13 +150,14 @@ def run(task_id: int, project_id: int, request_text: str):
     # Execution
     store.update_task_status(task_id, "execution")
     store.set_employee_status(specialist_id, "assigned")
-    draft_text, w_in, w_out, w_cost = _run_specialist(
-        specialist_id, roster["title"], roster["mission"], request_text, memory_context
+    draft_text, w_in, w_out, w_cost, w_tool_events = _run_specialist(
+        specialist_id, roster["title"], roster["mission"], request_text, memory_context, roster["permissions"]
     )
     total_in += w_in
     total_out += w_out
     total_cost += w_cost
     timeline.append({"step": "execution", "employee": specialist_id, "detail": f"Drafted a response as {roster['title']}."})
+    timeline.extend(w_tool_events)
 
     # QA
     store.update_task_status(task_id, "qa")
@@ -105,13 +169,15 @@ def run(task_id: int, project_id: int, request_text: str):
     timeline.append({"step": "qa", "employee": "qa", "detail": qa_note})
 
     if qa_note.strip().upper().startswith("REVISE"):
-        draft_text, r_in, r_out, r_cost = _run_specialist(
-            specialist_id, roster["title"], roster["mission"], request_text, memory_context, feedback=qa_note
+        draft_text, r_in, r_out, r_cost, r_tool_events = _run_specialist(
+            specialist_id, roster["title"], roster["mission"], request_text, memory_context,
+            roster["permissions"], feedback=qa_note,
         )
         total_in += r_in
         total_out += r_out
         total_cost += r_cost
         timeline.append({"step": "revision", "employee": specialist_id, "detail": "Produced a corrected draft based on QA feedback."})
+        timeline.extend(r_tool_events)
 
         qa_note, q2_in, q2_out, q2_cost = _run_qa(request_text, draft_text)
         total_in += q2_in
