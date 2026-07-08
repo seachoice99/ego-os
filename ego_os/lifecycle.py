@@ -1,6 +1,14 @@
 import json
+from datetime import date
 
 from ego_os import model_provider, store, tools
+
+
+def _today_line():
+    """Models don't otherwise know today's real date, and will misjudge
+    which live search/tool results are current vs. future -- found during
+    Web Research verification (v0.2)."""
+    return f"Today's date is {date.today().isoformat()}.\n\n"
 
 # Which capability a specialist uses to actually produce work. Orchestrator
 # only ever sees required_capabilities from the registry; this mapping is
@@ -61,6 +69,7 @@ def _run_specialist(specialist_id, title, mission, request_text, memory_context,
     revision_block = f"\n\nA QA reviewer asked for a revision: {feedback}\nProduce a corrected version." if feedback else ""
     prompt = (
         f"You are the {title} at a digital company. Mission: {mission}\n\n"
+        f"{_today_line()}"
         f"{context_block}"
         f"Fulfil this request from the Owner as a clear, complete artifact:\n\n{request_text}"
         f"{revision_block}"
@@ -111,8 +120,9 @@ def _execute_tool_request(tool_request_line, permissions):
 
 def _run_qa(request_text, draft_text):
     qa_prompt = (
-        "You are the QA Reviewer at a digital company. Original request:\n"
-        f"{request_text}\n\nDraft:\n{draft_text}\n\n"
+        "You are the QA Reviewer at a digital company.\n\n"
+        f"{_today_line()}"
+        f"Original request:\n{request_text}\n\nDraft:\n{draft_text}\n\n"
         "Reply with PASS if the draft satisfies the request, or REVISE: <reason> if not."
     )
     return model_provider.complete("critique", qa_prompt)
