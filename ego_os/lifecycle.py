@@ -26,7 +26,12 @@ EXECUTION_CAPABILITY = {
 
 def _select_specialist(request_text):
     """Orchestrator genuinely chooses between more than one specialist by
-    required capability, instead of a fixed rule."""
+    required capability, instead of a fixed rule. Returns
+    (specialist_id_or_None, gap_reason_or_None, in_tok, out_tok, cost) --
+    specialist_id is None only when the model itself reports no existing
+    roster member has the right capability (a genuine Capability Gap, v0.3),
+    which is different from an ambiguous reply that still gets a safe
+    default."""
     roster = store.get_roster_summary(list(EXECUTION_CAPABILITY.keys()))
     roster_description = "\n".join(
         f"- {r['id']}: {r['title']}. Mission: {r['mission']}. Capabilities: {', '.join(r['required_capabilities'])}."
@@ -36,14 +41,63 @@ def _select_specialist(request_text):
         "You are the Orchestrator at a digital company, deciding who should staff a task.\n\n"
         f"Available specialists:\n{roster_description}\n\n"
         f"Owner's request:\n{request_text}\n\n"
-        "Reply with exactly one word: the id of the single best-suited specialist, nothing else."
+        "If one of these specialists can genuinely handle this request, reply with exactly one "
+        "word: their id, nothing else.\n"
+        "If none of them have the right capability for this request, reply with exactly:\n"
+        "NO_MATCH: <one short sentence on what capability is missing>"
     )
     decision_text, in_tok, out_tok, cost = model_provider.complete("delegation", prompt)
-    decision = decision_text.strip().lower()
+    decision = decision_text.strip()
+    if decision.upper().startswith("NO_MATCH"):
+        gap_reason = decision.split(":", 1)[1].strip() if ":" in decision else "no matching capability"
+        return None, gap_reason, in_tok, out_tok, cost
+    decision_lower = decision.lower()
     for candidate_id in EXECUTION_CAPABILITY:
-        if candidate_id in decision:
-            return candidate_id, in_tok, out_tok, cost
-    return "writer", in_tok, out_tok, cost  # safe default if the reply was ambiguous
+        if candidate_id in decision_lower:
+            return candidate_id, None, in_tok, out_tok, cost
+    return "writer", None, in_tok, out_tok, cost  # safe default if the reply was ambiguous
+
+
+_PROPOSAL_FIELDS = (
+    "title", "department", "mission", "responsibilities", "required_capabilities",
+    "tools", "permissions", "reporting_rules", "temporary_or_permanent", "reason",
+)
+
+
+def _draft_employee_proposal(request_text, gap_reason):
+    """Capability Gap Handling (v0.3): instead of silently defaulting to an
+    existing specialist that doesn't really fit, draft an Employee Creation
+    Proposal matching tasks/templates/EMPLOYEE_CREATION.md's shape, for the
+    Owner to review. This only drafts the proposal -- it never creates the
+    employee automatically (unattended employee creation is deferred)."""
+    prompt = (
+        "You are the Orchestrator at a digital company. No existing employee can handle this "
+        f"request: {gap_reason}\n\nOwner's request:\n{request_text}\n\n"
+        "Draft a proposal for a new employee to handle requests like this, matching this exact "
+        "JSON shape (responsibilities/required_capabilities/tools/permissions/reporting_rules are "
+        "arrays of short strings, everything else is a string):\n"
+        '{"title": "...", "department": "...", "mission": "...", "responsibilities": ["..."], '
+        '"required_capabilities": ["..."], "tools": ["..."], "permissions": ["..."], '
+        '"reporting_rules": ["..."], "temporary_or_permanent": "temporary or permanent", '
+        '"reason": "why existing employees are not enough"}\n\n'
+        "Reply with ONLY that JSON object, nothing else."
+    )
+    text, in_tok, out_tok, cost = model_provider.complete("delegation", prompt)
+    brace = text.find("{")
+    fields = {}
+    if brace != -1:
+        try:
+            fields = json.JSONDecoder().raw_decode(text[brace:])[0]
+        except json.JSONDecodeError:
+            fields = {}
+    defaults = {
+        "title": "Proposed Specialist", "department": "Unassigned", "mission": request_text[:200],
+        "responsibilities": [], "required_capabilities": [], "tools": [], "permissions": [],
+        "reporting_rules": [], "temporary_or_permanent": "temporary", "reason": gap_reason,
+    }
+    for field in _PROPOSAL_FIELDS:
+        fields.setdefault(field, defaults[field])
+    return fields, in_tok, out_tok, cost
 
 
 def _tool_prompt_block(permissions):
@@ -167,10 +221,41 @@ def run(task_id: int, project_id: int, request_text: str):
 
     # Staffing
     store.update_task_status(task_id, "staffing")
-    specialist_id, s_in, s_out, s_cost = _select_specialist(request_text)
+    specialist_id, gap_reason, s_in, s_out, s_cost = _select_specialist(request_text)
     total_in += s_in
     total_out += s_out
     total_cost += s_cost
+
+    if specialist_id is None:
+        # Capability Gap Handling (v0.3): a genuine gap surfaces an
+        # Owner-actionable Employee Creation Proposal and pauses the task,
+        # instead of silently defaulting to a specialist who doesn't fit.
+        timeline.append({
+            "step": "staffing", "employee": "orchestrator",
+            "detail": f"No existing specialist matches this request: {gap_reason}",
+        })
+        fields, p_in, p_out, p_cost = _draft_employee_proposal(request_text, gap_reason)
+        total_in += p_in
+        total_out += p_out
+        total_cost += p_cost
+        store.create_employee_proposal(
+            task_id=task_id, trigger_text=request_text, title=fields["title"],
+            department=fields["department"], mission=fields["mission"],
+            responsibilities=fields["responsibilities"],
+            required_capabilities=fields["required_capabilities"],
+            tools_=fields["tools"], permissions=fields["permissions"],
+            reporting_rules=fields["reporting_rules"],
+            temporary_or_permanent=fields["temporary_or_permanent"], reason=fields["reason"],
+            input_tokens=total_in, output_tokens=total_out, cost=total_cost,
+        )
+        timeline.append({
+            "step": "gap", "employee": "orchestrator",
+            "detail": f"Drafted an Employee Creation Proposal ({fields['title']}) for Owner review.",
+        })
+        store.update_task_status(task_id, "awaiting_approval")
+        store.set_employee_status("orchestrator", "idle")
+        return
+
     roster = store.get_roster_summary([specialist_id])[0]
     timeline.append({"step": "staffing", "employee": "orchestrator", "detail": f"Assigned {roster['title']} and QA Reviewer."})
 

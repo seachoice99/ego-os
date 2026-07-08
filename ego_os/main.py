@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 
@@ -44,10 +45,29 @@ def on_startup():
 
 
 @app.get("/")
-def home(request: Request):
+def command(request: Request):
+    """Strategy / Command Interface (v0.3): where the Owner submits work,
+    approves the mandate, and reviews pending Employee Creation Proposals --
+    the action surface, split out from the observe-only Dashboard."""
     return templates.TemplateResponse(
         request,
-        "home.html",
+        "command.html",
+        {
+            "projects": store.get_projects(),
+            "mandate": store.get_current_mandate(),
+            "proposals": store.get_pending_proposals(),
+        },
+    )
+
+
+@app.get("/dashboard")
+def dashboard(request: Request):
+    """Operations Dashboard (v0.3): observe-only -- roster, tasks, cost.
+    No POST actions live here, so a future thin/mobile client could read
+    this surface without server-rendered-page assumptions leaking in."""
+    return templates.TemplateResponse(
+        request,
+        "dashboard.html",
         {
             "employees": store.get_employees(),
             "tasks": store.get_tasks(),
@@ -57,9 +77,68 @@ def home(request: Request):
     )
 
 
+@app.get("/employees/{employee_id}")
+def employee_detail(request: Request, employee_id: str):
+    employee = store.get_employee(employee_id)
+    if employee is None:
+        raise HTTPException(status_code=404)
+    return templates.TemplateResponse(
+        request,
+        "employee.html",
+        {
+            "employee": employee,
+            "capabilities": json.loads(employee["required_capabilities"]),
+            "permissions": json.loads(employee["permissions"]),
+            "history": store.get_employee_task_history(employee_id),
+        },
+    )
+
+
+@app.get("/projects/{project_id}/memory")
+def project_memory(request: Request, project_id: int):
+    project = store.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404)
+    return templates.TemplateResponse(
+        request,
+        "project_memory.html",
+        {"project": project, "entries": store.get_memory_entries(project_id)},
+    )
+
+
 @app.post("/projects")
 def submit_project(name: str = Form(...), vision: str = Form("")):
     store.create_project(name.strip(), vision.strip() or None)
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/mandate")
+def submit_mandate(mission: str = Form(...), starting_capital: float = Form(...), risk_policy: str = Form(...)):
+    """The Owner authoring and submitting this form *is* the Stage 1
+    Formation approval per architecture/006: 'the Owner approves the
+    mission, the starting capital, and the risk policy as a single
+    package.' Each submission is a new version, never an overwrite."""
+    store.create_mandate(mission.strip(), starting_capital, risk_policy.strip())
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/proposals/{proposal_id}/approve")
+def approve_proposal(proposal_id: int):
+    proposal = store.get_proposal(proposal_id)
+    if proposal is None:
+        raise HTTPException(status_code=404)
+    store.update_proposal_status(proposal_id, "approved")
+    store.update_task_status(proposal["task_id"], "gap_approved")
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/proposals/{proposal_id}/reject")
+def reject_proposal(proposal_id: int):
+    proposal = store.get_proposal(proposal_id)
+    if proposal is None:
+        raise HTTPException(status_code=404)
+    store.update_proposal_status(proposal_id, "rejected")
+    store.update_task_status(proposal["task_id"], "gap_rejected")
     return RedirectResponse(url="/", status_code=303)
 
 
@@ -81,10 +160,13 @@ def task_detail(request: Request, task_id: int):
     if report:
         qa_html = md.markdown(report["qa_note"], extensions=["sane_lists", "nl2br"])
         artifacts = [_render_text_artifact(report["result_text"])] + report["artifacts"]
+    proposal = store.get_proposal_by_task(task_id) if task["status"] in (
+        "awaiting_approval", "gap_approved", "gap_rejected"
+    ) else None
     return templates.TemplateResponse(
         request,
         "task.html",
-        {"task": task, "report": report, "artifacts": artifacts, "qa_html": qa_html},
+        {"task": task, "report": report, "artifacts": artifacts, "qa_html": qa_html, "proposal": proposal},
     )
 
 

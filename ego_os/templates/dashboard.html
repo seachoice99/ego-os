@@ -1,0 +1,77 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Ego OS — Dashboard</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 { margin-bottom: 0.2rem; }
+    .subtitle { color: #666; margin-top: 0; }
+    section { margin-top: 2rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; }
+    .status-idle { color: #666; }
+    .status-assigned { color: #b45309; font-weight: 600; }
+    .status-delivered { color: #15803d; }
+    .status-awaiting_approval { color: #b45309; font-weight: 600; }
+    .status-gap_approved { color: #15803d; }
+    .status-gap_rejected { color: #991b1b; }
+    a { color: #1d4ed8; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <h1>Ego OS</h1>
+  <p class="subtitle">Operations Dashboard &middot; total spend to date: ${{ "%.6f" | format(total_cost) }} &middot; <a href="/">&larr; Command</a></p>
+
+  <section>
+    <h2>Employees</h2>
+    <table>
+      <tr><th>Name</th><th>Title</th><th>Department</th><th>Status</th><th></th></tr>
+      {% for e in employees %}
+      <tr>
+        <td>{{ e.name }}</td>
+        <td>{{ e.title }}</td>
+        <td>{{ e.department }}</td>
+        <td class="status-{{ e.status }}">{{ e.status }}</td>
+        <td><a href="/employees/{{ e.id }}">history</a></td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+
+  <section>
+    <h2>Projects</h2>
+    <table>
+      <tr><th>Name</th><th>Vision</th><th></th></tr>
+      {% for p in projects %}
+      <tr>
+        <td>{{ p.name }}</td>
+        <td>{{ p.vision or '' }}</td>
+        <td><a href="/projects/{{ p.id }}/memory">memory</a></td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+
+  <section>
+    <h2>Tasks</h2>
+    {% if tasks %}
+    <table>
+      <tr><th>ID</th><th>Project</th><th>Request</th><th>Status</th><th></th></tr>
+      {% for t in tasks %}
+      <tr>
+        <td>{{ t.id }}</td>
+        <td>{{ t.project_name or '' }}</td>
+        <td>{{ t.request_text }}</td>
+        <td class="status-{{ t.status }}">{{ t.status }}</td>
+        <td><a href="/tasks/{{ t.id }}">view report</a></td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p>No tasks submitted yet.</p>
+    {% endif %}
+  </section>
+</body>
+</html>

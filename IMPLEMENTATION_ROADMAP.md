@@ -42,18 +42,18 @@ This is the primary implementation plan for Ego OS. It sequences work that is al
 
 ---
 
-## 🔜 v0.3 — Operational Company
+## ✅ v0.3 — Operational Company
 
 **Objective:** the company runs with real operating discipline — a recorded mandate, visible handling of capability gaps, deeper operational visibility, and a product surface matching the two-surface architecture.
 
 **Capabilities added:**
 
-- **Recorded Mandate** — mission, starting capital, and risk policy exist as a real, versioned, Owner-approved artifact, matching the Stage 1 (Formation) exit condition in `architecture/006`, instead of being assumed in code.
-- **Capability Gap Handling** — when no existing employee can be matched to a request, the company surfaces an Employee Creation Proposal (the template already exists at `tasks/templates/EMPLOYEE_CREATION.md`) instead of silently defaulting. This is the first point Gate Control needs to exist in code at all — trivially, since Stage 1/2 rules are "internal only, nothing external" — and the first shape of an Approval Request: a pending-decision state, not a new subsystem.
-- **Operations Visibility** — the dashboard grows toward the fuller surfaces already described in `ui/000_UI_CONCEPT.md`: company/roster view, per-employee history, and memory browsing directly rather than only seeing it silently injected into prompts.
-- **Command/Dashboard Split** — the combined page separates into a Strategy/Command Interface (submit, clarify, approve) and a distinct Operations Dashboard (observe), with routes clean enough that a future thin or mobile client could be built against them without server-rendered-page assumptions leaking in.
+- ✅ **Recorded Mandate** — mission, starting capital, and risk policy exist as a real, versioned, Owner-approved artifact, matching the Stage 1 (Formation) exit condition in `architecture/006`, instead of being assumed in code. Implemented as a `mandate` table (versioned: each submission inserts a new version rather than overwriting) and a form on the Command page; the Owner authoring and submitting mission + starting capital + risk policy together *is* the Stage 1 approval act. Verified end to end: an initial mandate (v1) and a revised one (v2) were both submitted and both preserved.
+- ✅ **Capability Gap Handling** — when no existing employee can be matched to a request, the company surfaces an Employee Creation Proposal (matching `tasks/templates/EMPLOYEE_CREATION.md`'s shape) instead of silently defaulting. Implemented by extending Orchestrator's staffing prompt to allow a `NO_MATCH: <reason>` reply, distinct from an ambiguous-but-answerable one; a genuine gap drafts a full proposal via a second LLM call, records it in a new `employee_proposals` table with `pending` status, and pauses the task at `awaiting_approval` instead of running execution/QA/delivery. The Command page lists pending proposals with full detail and Approve/Reject actions; approving or rejecting resolves the task to `gap_approved`/`gap_rejected`. Automatic employee creation itself remains deferred — approval records the decision, it does not provision a working employee. Verified end to end with two real gap-triggering requests (visual brand design, video ad production — both genuinely unstaffed today): correct `NO_MATCH` detection, a coherent drafted proposal (e.g. "Brand Designer, Creative Services"), one approved and one rejected, both resolving to the correct terminal task status. Cost of gap-handling LLM calls is included in total spend even though no report is produced.
+- ✅ **Operations Visibility** — the dashboard grows toward the fuller surfaces already described in `ui/000_UI_CONCEPT.md`: company/roster view, per-employee history, and memory browsing directly rather than only seeing it silently injected into prompts. Implemented as `GET /employees/{id}` (mission, capabilities, permissions, full task history derived from `reports.employees_involved`) and `GET /projects/{id}/memory` (full memory entry list per project, not just the 5 most recent injected into a prompt). Verified end to end against real data from this session's history.
+- ✅ **Command/Dashboard Split** — the combined page separates into a Strategy/Command Interface (submit, clarify, approve) and a distinct Operations Dashboard (observe), with routes clean enough that a future thin or mobile client could be built against them without server-rendered-page assumptions leaking in. `GET /` is now Command (mandate, projects, pending proposals, task submission — every POST-handling action lives here); `GET /dashboard` is observe-only (roster, tasks, cost, links into employee history and project memory). `home.html` was retired in favor of `command.html` + `dashboard.html`.
 
-**Exit criteria:** a genuine capability gap produces an Owner-actionable proposal instead of a silent default; the mandate is a real record the Owner can view; the Owner can approve something through the Command surface and observe the outcome through the Dashboard surface as two distinct interactions.
+**Exit criteria:** a genuine capability gap produces an Owner-actionable proposal instead of a silent default — met; the mandate is a real record the Owner can view — met; the Owner can approve something through the Command surface and observe the outcome through the Dashboard surface as two distinct interactions — met (proposal approval happens on Command, its resolved status is then visible on Dashboard's task list).
 
 **Dependencies:** v0.2.
 
@@ -61,7 +61,7 @@ This is the primary implementation plan for Ego OS. It sequences work that is al
 
 ---
 
-## ⏳ v0.5 — Self-Managing Company
+## 🔜 v0.5 — Self-Managing Company
 
 **Objective:** the company recognizes and manages its own valuable output, and can test monetization under bounded oversight.
 

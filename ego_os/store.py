@@ -51,6 +51,36 @@ CREATE TABLE IF NOT EXISTS memory (
     summary TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS mandate (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    version INTEGER NOT NULL,
+    mission TEXT NOT NULL,
+    starting_capital REAL NOT NULL,
+    risk_policy TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS employee_proposals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id),
+    trigger_text TEXT NOT NULL,
+    title TEXT NOT NULL,
+    department TEXT NOT NULL,
+    mission TEXT NOT NULL,
+    responsibilities TEXT NOT NULL DEFAULT '[]',
+    required_capabilities TEXT NOT NULL DEFAULT '[]',
+    tools TEXT NOT NULL DEFAULT '[]',
+    permissions TEXT NOT NULL DEFAULT '[]',
+    reporting_rules TEXT NOT NULL DEFAULT '[]',
+    temporary_or_permanent TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cost REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -286,10 +316,14 @@ def get_report(task_id):
 
 
 def get_total_cost():
+    """Sum of all recorded cost, whether the task fully completed (reports)
+    or stopped at a capability gap (employee_proposals) -- cost accounting
+    is first-class for every LLM call, not only completed tasks."""
     conn = get_connection()
     try:
-        row = conn.execute("SELECT COALESCE(SUM(cost), 0) AS total FROM reports").fetchone()
-        return row["total"]
+        reports_total = conn.execute("SELECT COALESCE(SUM(cost), 0) AS total FROM reports").fetchone()["total"]
+        proposals_total = conn.execute("SELECT COALESCE(SUM(cost), 0) AS total FROM employee_proposals").fetchone()["total"]
+        return reports_total + proposals_total
     finally:
         conn.close()
 
@@ -315,5 +349,152 @@ def get_recent_memory(project_id, limit=5):
             (project_id, limit),
         ).fetchall()
         return [r["summary"] for r in rows]
+    finally:
+        conn.close()
+
+
+def get_memory_entries(project_id):
+    """Full memory history for a project, for direct browsing on the
+    Dashboard (Operations Visibility) rather than only being injected
+    silently into a specialist's prompt."""
+    conn = get_connection()
+    try:
+        return conn.execute(
+            "SELECT m.id, m.summary, m.created_at, m.task_id, t.request_text FROM memory m "
+            "JOIN tasks t ON m.task_id = t.id WHERE t.project_id = ? ORDER BY m.id DESC",
+            (project_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def create_mandate(mission, starting_capital, risk_policy):
+    """Insert a new mandate version. Never overwrites a prior version --
+    per architecture/006 Stage 1, the mission/capital/risk policy are a
+    real, versioned, Owner-approved artifact."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT COALESCE(MAX(version), 0) AS v FROM mandate").fetchone()
+        version = row["v"] + 1
+        conn.execute(
+            "INSERT INTO mandate (version, mission, starting_capital, risk_policy) VALUES (?, ?, ?, ?)",
+            (version, mission, starting_capital, risk_policy),
+        )
+        conn.commit()
+        return version
+    finally:
+        conn.close()
+
+
+def get_current_mandate():
+    conn = get_connection()
+    try:
+        return conn.execute("SELECT * FROM mandate ORDER BY version DESC LIMIT 1").fetchone()
+    finally:
+        conn.close()
+
+
+def get_mandate_history():
+    conn = get_connection()
+    try:
+        return conn.execute("SELECT * FROM mandate ORDER BY version DESC").fetchall()
+    finally:
+        conn.close()
+
+
+def create_employee_proposal(
+    task_id, trigger_text, title, department, mission, responsibilities,
+    required_capabilities, tools_, permissions, reporting_rules,
+    temporary_or_permanent, reason, input_tokens, output_tokens, cost,
+):
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "INSERT INTO employee_proposals (task_id, trigger_text, title, department, mission, "
+            "responsibilities, required_capabilities, tools, permissions, reporting_rules, "
+            "temporary_or_permanent, reason, input_tokens, output_tokens, cost) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_id, trigger_text, title, department, mission,
+                json.dumps(responsibilities), json.dumps(required_capabilities),
+                json.dumps(tools_), json.dumps(permissions), json.dumps(reporting_rules),
+                temporary_or_permanent, reason, input_tokens, output_tokens, cost,
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def _parse_proposal(row):
+    proposal = dict(row)
+    for field in ("responsibilities", "required_capabilities", "tools", "permissions", "reporting_rules"):
+        proposal[field] = json.loads(proposal[field])
+    return proposal
+
+
+def get_proposals():
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT * FROM employee_proposals ORDER BY id DESC").fetchall()
+        return [_parse_proposal(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_pending_proposals():
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM employee_proposals WHERE status = 'pending' ORDER BY id DESC"
+        ).fetchall()
+        return [_parse_proposal(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_proposal(proposal_id):
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM employee_proposals WHERE id = ?", (proposal_id,)).fetchone()
+        return _parse_proposal(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_proposal_by_task(task_id):
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM employee_proposals WHERE task_id = ?", (task_id,)).fetchone()
+        return _parse_proposal(row) if row else None
+    finally:
+        conn.close()
+
+
+def update_proposal_status(proposal_id, status):
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE employee_proposals SET status = ? WHERE id = ?", (status, proposal_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_employee_task_history(employee_id):
+    """Per-employee task history (Operations Visibility) -- which tasks an
+    employee was actually involved in, derived from each report's
+    employees_involved list."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT r.task_id, r.employees_involved, t.request_text, t.status FROM reports r "
+            "JOIN tasks t ON r.task_id = t.id ORDER BY r.task_id DESC"
+        ).fetchall()
+        history = []
+        for r in rows:
+            if employee_id in json.loads(r["employees_involved"]):
+                history.append({"task_id": r["task_id"], "request_text": r["request_text"], "status": r["status"]})
+        return history
     finally:
         conn.close()

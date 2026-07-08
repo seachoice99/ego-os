@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Ego OS — {{ employee.name }}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 { margin-bottom: 0.2rem; }
+    .subtitle { color: #666; margin-top: 0; }
+    section { margin-top: 1.5rem; border: 1px solid #e2e2e2; border-radius: 10px; padding: 1.2rem 1.4rem; background: #fff; }
+    section h2 { margin-top: 0; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; }
+    .status-idle { color: #666; }
+    .status-assigned { color: #b45309; font-weight: 600; }
+    .status-delivered { color: #15803d; }
+    .tag { display: inline-block; background: #f1f5f9; border-radius: 4px; padding: 0.15rem 0.5rem; margin: 0.1rem; font-size: 0.85rem; }
+    a { color: #1d4ed8; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <p><a href="/dashboard">&larr; back to dashboard</a></p>
+  <h1>{{ employee.name }}</h1>
+  <p class="subtitle">{{ employee.title }} &middot; {{ employee.department }} &middot; <span class="status-{{ employee.status }}">{{ employee.status }}</span> &middot; v{{ employee.version }}</p>
+
+  <section>
+    <h2>Mission</h2>
+    <p>{{ employee.mission }}</p>
+    <h2>Required capabilities</h2>
+    <p>{% for c in capabilities %}<span class="tag">{{ c }}</span>{% endfor %}</p>
+    <h2>Permissions</h2>
+    <p>{% for perm in permissions %}<span class="tag">{{ perm }}</span>{% endfor %}</p>
+  </section>
+
+  <section>
+    <h2>Task history</h2>
+    {% if history %}
+    <table>
+      <tr><th>Task</th><th>Request</th><th>Status</th><th></th></tr>
+      {% for h in history %}
+      <tr>
+        <td>#{{ h.task_id }}</td>
+        <td>{{ h.request_text }}</td>
+        <td>{{ h.status }}</td>
+        <td><a href="/tasks/{{ h.task_id }}">view</a></td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p>No tasks recorded for this employee yet.</p>
+    {% endif %}
+  </section>
+</body>
+</html>

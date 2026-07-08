@@ -2,6 +2,21 @@
 
 All notable changes to Ego OS are recorded here, newest first. See `IMPLEMENTATION_ROADMAP.md` for the forward-looking plan this changelog reports against.
 
+## [Unreleased] — v0.3.0 — "Operational Company"
+
+All four planned v0.3 capabilities shipped, verified end to end.
+
+### Added
+
+- **Recorded Mandate** — a versioned `mandate` table plus a Command-page form; submitting mission + starting capital + risk policy together is the Owner's Stage 1 Formation approval. Each submission is a new version, never an overwrite.
+- **Capability Gap Handling** — Orchestrator's staffing prompt can now reply `NO_MATCH: <reason>` instead of being forced into an existing specialist. A genuine gap drafts a full Employee Creation Proposal (matching `tasks/templates/EMPLOYEE_CREATION.md`), records it with `pending` status, and pauses the task at `awaiting_approval` instead of silently defaulting. New Command-page Approve/Reject actions resolve the task to `gap_approved`/`gap_rejected`. Automatic employee provisioning itself remains deferred.
+- **Operations Visibility** — `GET /employees/{id}` (mission, capabilities, permissions, full task history) and `GET /projects/{id}/memory` (full memory browsing, not just the 5 most recent entries silently injected into a prompt).
+- **Command/Dashboard Split** — `GET /` is now the Strategy/Command Interface (mandate, projects, pending proposals, task submission); `GET /dashboard` is the observe-only Operations Dashboard (roster, tasks, cost). `home.html` retired in favor of `command.html` + `dashboard.html`.
+
+### Changed
+
+- `store.get_total_cost()` now also sums cost recorded against capability-gap proposals, not just completed-task reports, so total spend stays accurate even when a task doesn't finish the full lifecycle.
+
 ## [v0.2.0] — 2026-07-08 — "Useful Company"
 
 All seven planned v0.2 capabilities shipped, verified end to end (locally and in production), and deployed.

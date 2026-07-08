@@ -66,10 +66,20 @@
   </style>
 </head>
 <body>
-  <p><a href="/">&larr; back to dashboard</a></p>
+  <p><a href="/dashboard">&larr; back to dashboard</a></p>
   <h1>Task #{{ task.id }}</h1>
   <p class="request">{{ task.request_text }}</p>
   <p>Project: <strong>{{ task.project_name or 'General' }}</strong> &middot; Status: <strong>{{ task.status }}</strong></p>
+
+  {% if proposal %}
+  <section class="artifact">
+    <div class="artifact-header"><span class="artifact-icon">&#129309;</span><h2>Capability Gap</h2></div>
+    <div class="artifact-body">
+      <p>No existing employee matched this request. The Orchestrator drafted an Employee Creation Proposal (<strong>{{ proposal.title }}</strong>) instead of silently defaulting to the wrong specialist.</p>
+      <p>Status: <strong>{{ proposal.status }}</strong> &middot; <a href="/">review on the Command page &rarr;</a></p>
+    </div>
+  </section>
+  {% endif %}
 
   {% if report %}
   <section class="artifact">
@@ -127,7 +137,7 @@
       </div>
     </div>
   </section>
-  {% else %}
+  {% elif not proposal %}
   <p>Report not yet available.</p>
   {% endif %}
 </body>
