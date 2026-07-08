@@ -17,6 +17,7 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 def on_startup():
     store.init_db()
     employees.sync_from_registry()
+    store.ensure_default_project()
 
 
 @app.get("/")
@@ -27,14 +28,16 @@ def home(request: Request):
         {
             "employees": store.get_employees(),
             "tasks": store.get_tasks(),
+            "total_cost": store.get_total_cost(),
         },
     )
 
 
 @app.post("/tasks")
 def submit_task(request_text: str = Form(...)):
-    task_id = store.create_task(request_text)
-    lifecycle.run(task_id, request_text)
+    project_id = store.ensure_default_project()
+    task_id = store.create_task(request_text, project_id)
+    lifecycle.run(task_id, project_id, request_text)
     return RedirectResponse(url=f"/tasks/{task_id}", status_code=303)
 
 

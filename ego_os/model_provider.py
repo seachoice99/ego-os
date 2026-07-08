@@ -7,6 +7,8 @@ from openai import OpenAI
 _CAPABILITY_MODELS = {
     "business_communication": "anthropic/claude-haiku-4.5",
     "critique": "anthropic/claude-haiku-4.5",
+    "delegation": "anthropic/claude-haiku-4.5",
+    "synthesis": "anthropic/claude-haiku-4.5",
 }
 
 _PRICE_PER_TOKEN = {

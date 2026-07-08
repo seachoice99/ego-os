@@ -11,12 +11,21 @@ CREATE TABLE IF NOT EXISTS employees (
     title TEXT NOT NULL,
     department TEXT NOT NULL,
     mission TEXT NOT NULL,
+    required_capabilities TEXT NOT NULL DEFAULT '[]',
     version TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'idle'
 );
 
+CREATE TABLE IF NOT EXISTS projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    vision TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER REFERENCES projects(id),
     request_text TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'intake',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -50,29 +59,56 @@ def get_connection():
     return conn
 
 
+def _ensure_column(conn, table, column, coldef):
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coldef}")
+
+
 def init_db():
     conn = get_connection()
     try:
         conn.executescript(SCHEMA)
+        # Migrations for databases created before Phase 1.
+        _ensure_column(conn, "employees", "required_capabilities", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_column(conn, "tasks", "project_id", "INTEGER REFERENCES projects(id)")
         conn.commit()
     finally:
         conn.close()
 
 
-def upsert_employee(id, name, title, department, mission, version):
+def ensure_default_project():
     conn = get_connection()
     try:
+        row = conn.execute("SELECT id FROM projects ORDER BY id LIMIT 1").fetchone()
+        if row:
+            return row["id"]
+        cur = conn.execute(
+            "INSERT INTO projects (name, vision) VALUES (?, ?)",
+            ("General", "The Owner's default working context."),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def upsert_employee(id, name, title, department, mission, required_capabilities, version):
+    conn = get_connection()
+    try:
+        capabilities_json = json.dumps(required_capabilities)
         existing = conn.execute("SELECT id FROM employees WHERE id = ?", (id,)).fetchone()
         if existing:
             conn.execute(
-                "UPDATE employees SET name=?, title=?, department=?, mission=?, version=? WHERE id=?",
-                (name, title, department, mission, version, id),
+                "UPDATE employees SET name=?, title=?, department=?, mission=?, required_capabilities=?, "
+                "version=? WHERE id=?",
+                (name, title, department, mission, capabilities_json, version, id),
             )
         else:
             conn.execute(
-                "INSERT INTO employees (id, name, title, department, mission, version, status) "
-                "VALUES (?, ?, ?, ?, ?, ?, 'idle')",
-                (id, name, title, department, mission, version),
+                "INSERT INTO employees (id, name, title, department, mission, required_capabilities, version, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'idle')",
+                (id, name, title, department, mission, capabilities_json, version),
             )
         conn.commit()
     finally:
@@ -95,6 +131,30 @@ def get_employee(id):
         conn.close()
 
 
+def get_roster_summary(ids):
+    """Return id/title/mission/required_capabilities for the given employee
+    ids, with required_capabilities parsed back into a list -- the shape
+    Orchestrator needs to reason about who to staff."""
+    conn = get_connection()
+    try:
+        placeholders = ",".join("?" for _ in ids)
+        rows = conn.execute(
+            f"SELECT id, title, mission, required_capabilities FROM employees WHERE id IN ({placeholders})",
+            ids,
+        ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "title": r["title"],
+                "mission": r["mission"],
+                "required_capabilities": json.loads(r["required_capabilities"]),
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
 def set_employee_status(id, status):
     conn = get_connection()
     try:
@@ -104,12 +164,12 @@ def set_employee_status(id, status):
         conn.close()
 
 
-def create_task(request_text):
+def create_task(request_text, project_id):
     conn = get_connection()
     try:
         cur = conn.execute(
-            "INSERT INTO tasks (request_text, status) VALUES (?, 'intake')",
-            (request_text,),
+            "INSERT INTO tasks (project_id, request_text, status) VALUES (?, ?, 'intake')",
+            (project_id, request_text),
         )
         conn.commit()
         return cur.lastrowid
@@ -178,6 +238,15 @@ def get_report(task_id):
         conn.close()
 
 
+def get_total_cost():
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT COALESCE(SUM(cost), 0) AS total FROM reports").fetchone()
+        return row["total"]
+    finally:
+        conn.close()
+
+
 def create_memory_entry(task_id, summary):
     conn = get_connection()
     try:
@@ -186,5 +255,18 @@ def create_memory_entry(task_id, summary):
             (task_id, summary),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def get_recent_memory(project_id, limit=5):
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT m.summary FROM memory m JOIN tasks t ON m.task_id = t.id "
+            "WHERE t.project_id = ? ORDER BY m.id DESC LIMIT ?",
+            (project_id, limit),
+        ).fetchall()
+        return [r["summary"] for r in rows]
     finally:
         conn.close()
