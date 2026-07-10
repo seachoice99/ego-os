@@ -1,6 +1,6 @@
 {
   "id": "SR-04",
-  "status": "blocked",
+  "status": "ready",
   "priority": "P2",
   "title": "Skills UI (read-only) and audit trail",
   "prompt": "Add GET /skills (list: id, name, version, trust state, lifecycle state, origin, license, digest status, which employees use it, requirements, permissions required, last check) and GET /skills/{skill_id}/{version} (manifest detail: no secrets, HTML-escaped, does not execute skill content, read-only -- no install/import/registry-mutation route). Add an append-only audit trail (simplest option: JSONL file in a runtime data directory, or one additive DB table -- not mixed into the immutable skill package itself) recording discovered/created, validated, attached, detached, deprecated, revoked, and resolution-failure events, with no raw prompts, credentials, or hidden chain-of-thought. Both routes require the existing Owner auth.",

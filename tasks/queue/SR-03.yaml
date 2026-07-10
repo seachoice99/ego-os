@@ -1,6 +1,6 @@
 {
   "id": "SR-03",
-  "status": "testing",
+  "status": "done",
   "priority": "P1",
   "title": "First internal Skill: structured_reporting, attached to 2+ Employees",
   "prompt": "Create the first internal Skill package: skills/registry/structured_reporting/1.0.0/ with manifest.yaml (origin internal, trust approved, lifecycle active) and SKILL.md describing a shared report-assembly procedure: goal, actions taken, evidence, changed files/artifacts, tests/checks, risks, cost, open questions, final status. The Skill must not contain Persona/role text, credentials, a specific model, Tool implementations, extra permissions, or production data. Attach it to at least two Employees where genuinely justified (coder, and researcher or orchestrator), bumping their Employee version and preserving historical compatibility (old reports keep referencing the old employee version). Write golden tests proving: consistent shared report structure across both employees; each employee's role-specific reporting rules still apply (coder still reports changed files/tests; researcher still reports sources/uncertainty, or orchestrator still reports staffing decisions); the skill does not erase Persona; the skill does not change Tool permissions; missing the skill blocks before any model call; old Task history is unchanged. After deploy, run at least two real production tasks (one Coder-or-safe-technical-report task, one Researcher/Orchestrator task) and confirm both execution logs record structured_reporting@1.0.0 while keeping their own role-specific content.",
@@ -34,5 +34,16 @@
   "risks": [],
   "owner_approved": false,
   "release": "automatic",
-  "result": null
+  "result": {
+    "commit": "7db475f0bd3eb6dba7d5c612ed25a1a7611de731",
+    "changed_files": ["skills/registry/structured_reporting/1.0.0/manifest.yaml", "skills/registry/structured_reporting/1.0.0/SKILL.md", "company/employees/core/coder.yaml", "company/employees/core/researcher.yaml", "ego_os/lifecycle.py", "tests/test_structured_reporting_skill.py", "IMPLEMENTATION_ROADMAP.md", "CHANGELOG.md"],
+    "tests": "92 passed (85 pre-existing + 7 new), 0 failed",
+    "deploy": "production HEAD 7db475f0bd3eb6dba7d5c612ed25a1a7611de731, service active",
+    "health_check": "unauthenticated 401, authenticated 200",
+    "production_tasks": {
+      "coder": "task 28, delivered/completed, execution_events skill_id=structured_reporting skill_version=1.0.0",
+      "researcher": "task 29, delivered/completed, execution_events skill_id=structured_reporting skill_version=1.0.0"
+    },
+    "digest_verified": "sha256:2c87c8bf2828fe14d620a1e1d6f5a547145e8fc0fbef17ff5a04425efb53b489 matched in both production reports"
+  }
 }
