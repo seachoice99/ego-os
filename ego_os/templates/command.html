@@ -12,7 +12,7 @@
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
     textarea { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 1rem; padding: 0.6rem; }
-    textarea:disabled { background: #f3f3f3; color: #888; }
+    textarea:disabled, textarea:read-only { background: #f3f3f3; color: #888; }
     input[type=text], input[type=number] { padding: 0.4rem 0.6rem; font-size: 1rem; box-sizing: border-box; }
     button { margin-top: 0.5rem; padding: 0.5rem 1.2rem; font-size: 1rem; cursor: pointer; display: inline-flex; align-items: center; gap: 0.5rem; }
     button:disabled { cursor: not-allowed; opacity: 0.85; }
@@ -156,7 +156,12 @@
         submitted = true;
         document.body.classList.add('is-loading');
         btn.disabled = true;
-        textarea.disabled = true;
+        // Not textarea.disabled -- a disabled form field is dropped from the
+        // submitted form data, since the browser builds the entry list
+        // *after* this handler runs. Doing that silently stripped
+        // request_text from every real browser submission (curl-based
+        // testing never caught it, since it doesn't run this script).
+        textarea.readOnly = true;
         btn.innerHTML = '<span class="spinner"></span> Company is working...';
       });
     })();
