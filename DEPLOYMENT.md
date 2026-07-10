@@ -112,3 +112,10 @@ Location: `/opt/ego-os/.env` on the server only, mode `600`, owned by `egoos`. C
 ## Presentation Website publishing (v0.4)
 
 The `build_presentation_site` tool publishes static sites to the directory named by the `PRESENTATIONS_DIR` env var (defaults to a local `ego_os/generated/_presentations/` for dev). In production this is set to `/var/www/ego-presentations`, owned by `egoos:www-data` with group read/execute so nginx can serve it, and exposed at `https://os.fiveseven.ru/p/<site_name>/` via one added `location /p/` block in the existing `/etc/nginx/sites-available/os.fiveseven.ru` (an `alias` to that directory, `autoindex off`) — no new DNS record, certificate, or nginx site was needed since it reuses the already-issued `os.fiveseven.ru` certificate.
+
+A real slide deck (a multi-MB `.pdf`, or a large `.zip`) needs two nginx defaults raised on this site, both applied directly on the server (not tracked in this repo, since they live in `/etc/nginx/sites-available/os.fiveseven.ru`):
+
+- `client_max_body_size 100m;` (server block) — the 1MB default silently 413'd any realistically-sized deck.
+- `proxy_read_timeout 300s; proxy_send_timeout 300s;` (the `location /` block) — a heavy deck (many pages, PDF rendering, multiple LLM calls including a possible QA revision) can genuinely take over the 60s default; the request still completes server-side past that point, but the client saw a dead connection with nothing to show for it.
+
+If this nginx site is ever rebuilt from scratch, re-apply both.
