@@ -162,6 +162,20 @@ def init_db():
         # across upgrades).
         _ensure_column(conn, "reports", "employee_versions", "TEXT NOT NULL DEFAULT '{}'")
 
+        # Migration for databases created before Employee Skill references
+        # (SR-02): an Employee's optional list of {"id", "version"} Skill
+        # references, absent (=> '[]') for every Employee defined before
+        # ADR-0004. Additive and backward compatible -- an Employee with
+        # no skills behaves exactly as before.
+        _ensure_column(conn, "employees", "skills", "TEXT NOT NULL DEFAULT '[]'")
+        # Which exact Skill (id/version/digest) a step actually used, and
+        # which Skills a delivered report's work drew on -- both additive,
+        # both default to "nothing" for history that predates Skills.
+        _ensure_column(conn, "execution_events", "skill_id", "TEXT")
+        _ensure_column(conn, "execution_events", "skill_version", "TEXT")
+        _ensure_column(conn, "execution_events", "skill_digest", "TEXT")
+        _ensure_column(conn, "reports", "skills_used", "TEXT NOT NULL DEFAULT '[]'")
+
         conn.commit()
     finally:
         conn.close()
@@ -212,23 +226,24 @@ def get_project(project_id):
         conn.close()
 
 
-def upsert_employee(id, name, title, department, mission, required_capabilities, permissions, version):
+def upsert_employee(id, name, title, department, mission, required_capabilities, permissions, version, skills=None):
     conn = get_connection()
     try:
         capabilities_json = json.dumps(required_capabilities)
         permissions_json = json.dumps(permissions)
+        skills_json = json.dumps(skills or [])
         existing = conn.execute("SELECT id FROM employees WHERE id = ?", (id,)).fetchone()
         if existing:
             conn.execute(
                 "UPDATE employees SET name=?, title=?, department=?, mission=?, required_capabilities=?, "
-                "permissions=?, version=? WHERE id=?",
-                (name, title, department, mission, capabilities_json, permissions_json, version, id),
+                "permissions=?, version=?, skills=? WHERE id=?",
+                (name, title, department, mission, capabilities_json, permissions_json, version, skills_json, id),
             )
         else:
             conn.execute(
                 "INSERT INTO employees (id, name, title, department, mission, required_capabilities, "
-                "permissions, version, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'idle')",
-                (id, name, title, department, mission, capabilities_json, permissions_json, version),
+                "permissions, version, skills, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')",
+                (id, name, title, department, mission, capabilities_json, permissions_json, version, skills_json),
             )
         conn.commit()
     finally:
@@ -252,17 +267,19 @@ def get_employee(id):
 
 
 def get_roster_summary(ids):
-    """Return id/title/mission/required_capabilities/permissions/version
-    for the given employee ids, with the JSON columns parsed back into
-    lists -- the shape Orchestrator needs to reason about who to staff,
-    the shape the Tool Framework needs to know what a chosen specialist
-    may access, and (v0.4.1) the version so the lifecycle can record
-    which Employee Definition version actually performed the work."""
+    """Return id/title/mission/required_capabilities/permissions/version/
+    skills for the given employee ids, with the JSON columns parsed back
+    into lists -- the shape Orchestrator needs to reason about who to
+    staff, the shape the Tool Framework needs to know what a chosen
+    specialist may access, the version (v0.4.1) so the lifecycle can
+    record which Employee Definition version actually performed the
+    work, and (SR-02) the Skill references so the lifecycle can resolve
+    and fail closed on them before any model call."""
     conn = get_connection()
     try:
         placeholders = ",".join("?" for _ in ids)
         rows = conn.execute(
-            f"SELECT id, title, mission, required_capabilities, permissions, version FROM employees WHERE id IN ({placeholders})",
+            f"SELECT id, title, mission, required_capabilities, permissions, version, skills FROM employees WHERE id IN ({placeholders})",
             ids,
         ).fetchall()
         return [
@@ -273,6 +290,7 @@ def get_roster_summary(ids):
                 "required_capabilities": json.loads(r["required_capabilities"]),
                 "permissions": json.loads(r["permissions"]),
                 "version": r["version"],
+                "skills": json.loads(r["skills"]) if r["skills"] is not None else [],
             }
             for r in rows
         ]
@@ -358,12 +376,12 @@ def get_task(task_id):
         conn.close()
 
 
-def create_report(task_id, employees_involved, timeline, input_tokens, output_tokens, cost, result_text, qa_note, artifacts=None, employee_versions=None):
+def create_report(task_id, employees_involved, timeline, input_tokens, output_tokens, cost, result_text, qa_note, artifacts=None, employee_versions=None, skills_used=None):
     conn = get_connection()
     try:
         conn.execute(
             "INSERT INTO reports (task_id, employees_involved, timeline, input_tokens, output_tokens, cost, "
-            "result_text, qa_note, artifacts, employee_versions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "result_text, qa_note, artifacts, employee_versions, skills_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id,
                 json.dumps(employees_involved),
@@ -375,6 +393,7 @@ def create_report(task_id, employees_involved, timeline, input_tokens, output_to
                 qa_note,
                 json.dumps(artifacts or []),
                 json.dumps(employee_versions or {}),
+                json.dumps(skills_used or []),
             ),
         )
         conn.commit()
@@ -393,6 +412,7 @@ def get_report(task_id):
         report["timeline"] = json.loads(report["timeline"])
         report["artifacts"] = json.loads(report["artifacts"])
         report["employee_versions"] = json.loads(report["employee_versions"])
+        report["skills_used"] = json.loads(report["skills_used"])
         return report
     finally:
         conn.close()
@@ -401,22 +421,28 @@ def get_report(task_id):
 def log_execution_event(
     task_id, step, employee_id=None, employee_version=None, capability=None, model=None,
     tool_name=None, tool_args_summary=None, input_tokens=0, output_tokens=0, cost=0.0,
-    status=None, detail=None, duration_ms=None,
+    status=None, detail=None, duration_ms=None, skill_id=None, skill_version=None, skill_digest=None,
 ):
     """Written incrementally as the lifecycle proceeds (not just once at
     the end, unlike reports.timeline) -- so a crash mid-task still leaves
     a real, queryable operational record of what happened before it died.
     Only operational facts (who, what step, what model/tool, cost,
-    outcome) -- never hidden chain-of-thought, per architecture/003."""
+    outcome) -- never hidden chain-of-thought, per architecture/003.
+    skill_id/skill_version/skill_digest (SR-02) record which exact,
+    locked Skill version a step actually used -- a single skill per event
+    is enough for this MVP (the first real Skill, structured_reporting,
+    is attached one-per-employee); a multi-skill-per-step model would
+    need a join table if that ever becomes a real requirement."""
     conn = get_connection()
     try:
         conn.execute(
             "INSERT INTO execution_events (task_id, step, employee_id, employee_version, capability, "
             "model, tool_name, tool_args_summary, input_tokens, output_tokens, cost, status, detail, "
-            "duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "duration_ms, skill_id, skill_version, skill_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id, step, employee_id, employee_version, capability, model, tool_name,
                 tool_args_summary, input_tokens, output_tokens, cost, status, detail, duration_ms,
+                skill_id, skill_version, skill_digest,
             ),
         )
         conn.commit()

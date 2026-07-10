@@ -23,4 +23,8 @@ def sync_from_registry():
             required_capabilities=definition.get("required_capabilities", []),
             permissions=definition.get("permissions", []),
             version=str(definition["version"]),
+            # Optional (SR-02): a list of {"id", "version"} Skill references.
+            # Absent for every pre-existing Employee YAML -- defaults to []
+            # and behaves exactly as before ADR-0004's Skill composition.
+            skills=definition.get("skills", []),
         )

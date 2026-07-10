@@ -3,13 +3,25 @@ import re
 import time
 from datetime import date
 
-from ego_os import model_provider, store, tools
+from ego_os import model_provider, skills, store, tools
 
 _TOOL_REQUEST_RE = re.compile(r"TOOL_REQUEST:\s*(\S+)")
 
 
 def _elapsed_ms(start: float) -> int:
     return int((time.perf_counter() - start) * 1000)
+
+
+def _resolve_employee_skills(skill_refs):
+    """skill_refs: the employee's roster `skills` list, each
+    {"id": ..., "version": ...} (SR-02). Resolves each to its exact,
+    locked manifest, failing closed (raising skills.SkillError -- a
+    clean message, no stack trace) before any model call if a reference
+    is missing, revoked, or tampered, per architecture/012: 'Missing/
+    revoked/tampered Skill: fail before provider invocation.' An
+    Employee with no skills (every pre-SR-02 Employee) resolves to an
+    empty list and behaves exactly as before."""
+    return [skills.get_exact_version(ref["id"], ref["version"]) for ref in (skill_refs or [])]
 
 
 def _today_line():
@@ -347,6 +359,27 @@ def run(task_id: int, project_id: int, request_text: str):
     employee_versions = {"orchestrator": orchestrator_version, specialist_id: roster["version"], "qa": qa_version}
     specialist_capability = EXECUTION_CAPABILITY[specialist_id]
 
+    # Skill resolution (SR-02): resolved once, before the specialist is
+    # ever invoked -- a missing/revoked/tampered reference fails closed
+    # right here, propagating up through worker.process_one as a clean
+    # 'failed' task, never reaching a model call.
+    try:
+        resolved_skills = _resolve_employee_skills(roster.get("skills", []))
+    except skills.SkillError as exc:
+        store.log_execution_event(
+            task_id, step="skill_resolution", employee_id=specialist_id, employee_version=roster["version"],
+            status="error", detail=str(exc),
+        )
+        store.set_employee_status("orchestrator", "idle")
+        raise
+    primary_skill = resolved_skills[0] if resolved_skills else None
+    skill_id = primary_skill["id"] if primary_skill else None
+    skill_version = primary_skill["version"] if primary_skill else None
+    skill_digest = primary_skill["entrypoint"]["digest"] if primary_skill else None
+    skills_used = [
+        {"id": m["id"], "version": m["version"], "digest": m["entrypoint"]["digest"]} for m in resolved_skills
+    ]
+
     # Execution
     store.update_task_status(task_id, "execution")
     store.set_employee_status(specialist_id, "assigned")
@@ -364,6 +397,7 @@ def run(task_id: int, project_id: int, request_text: str):
         capability=specialist_capability, model=model_provider.model_for_capability(specialist_capability),
         input_tokens=w_in, output_tokens=w_out, cost=w_cost, status="ok",
         detail=f"Drafted a response as {roster['title']}.", duration_ms=execution_duration_ms,
+        skill_id=skill_id, skill_version=skill_version, skill_digest=skill_digest,
     )
     for event in w_tool_events:
         timeline.append({"step": event["step"], "employee": event["employee"], "detail": event["detail"]})
@@ -407,6 +441,7 @@ def run(task_id: int, project_id: int, request_text: str):
             capability=specialist_capability, model=model_provider.model_for_capability(specialist_capability),
             input_tokens=r_in, output_tokens=r_out, cost=r_cost, status="ok",
             detail="Produced a corrected draft based on QA feedback.", duration_ms=revision_duration_ms,
+            skill_id=skill_id, skill_version=skill_version, skill_digest=skill_digest,
         )
         for event in r_tool_events:
             timeline.append({"step": event["step"], "employee": event["employee"], "detail": event["detail"]})
@@ -460,6 +495,7 @@ def run(task_id: int, project_id: int, request_text: str):
         qa_note=qa_note,
         artifacts=artifacts,
         employee_versions=employee_versions,
+        skills_used=skills_used,
     )
 
     # Memory Update

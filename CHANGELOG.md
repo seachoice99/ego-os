@@ -2,6 +2,21 @@
 
 All notable changes to Ego OS are recorded here, newest first. See `IMPLEMENTATION_ROADMAP.md` for the forward-looking plan this changelog reports against.
 
+## [Unreleased] — Employee Skill references (SR-02)
+
+### Added
+
+- **Employee `skills` field** — an optional, backward-compatible list of `{id, version}` Skill references on Employee YAML. An Employee without it (every pre-SR-02 Employee) behaves exactly as before.
+- **Fail-closed resolution before any model call** — a missing, revoked, or digest-tampered Skill reference raises before the specialist's model is ever invoked; the task fails with a clean message via the existing v0.4.1 worker error path (`run_state='failed'`, `error_message`), not a crash.
+- **Skill/execution traceability** — `execution_events` gains `skill_id`/`skill_version`/`skill_digest`; `reports` gains `skills_used` (the exact skills actually used, id+version+digest). A historical report keeps its original Skill version even after the Employee is later re-pointed at a newer one.
+- **No permission widening** — a Skill's declared `requirements.permissions` never appears in the Employee's own granted permissions; effective authority is still exactly the Employee's own `permissions` field.
+
+### Changed
+
+- Additive, idempotent DB migration: `employees.skills`, `execution_events.skill_id`/`skill_version`/`skill_digest`, `reports.skills_used` — all new columns, all backfilled safely for pre-existing rows.
+
+10 new tests (85 total): employee without skills, employee YAML `skills` field loaded via `sync_from_registry`, a real task resolving and tracing a valid skill, two employees sharing one skill, missing/revoked/tampered skill all blocking before the model call, permissions not widened, historical report version preserved after a newer Skill version is registered, and the schema migration itself against a throwaway pre-SR-02 database copy.
+
 ## [Unreleased] — Skills Registry (SR-01)
 
 ### Added

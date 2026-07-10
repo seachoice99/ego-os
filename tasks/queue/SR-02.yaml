@@ -1,6 +1,6 @@
 {
   "id": "SR-02",
-  "status": "ready",
+  "status": "testing",
   "priority": "P1",
   "title": "Employee Skill references (backward compatible)",
   "prompt": "Extend Employee YAML with an optional `skills` field (list of {id, version}) that is backward compatible: existing Employee YAML files without `skills` continue to work unchanged. When an Employee's definition is loaded/synced, validate each referenced skill exists in the Registry (SR-01), is not revoked, and its digest/entrypoint check passes; a missing/revoked/tampered skill must block that Employee's use before any model invocation, with a clear operational error, not a crash. Skill requirements must never add Employee permissions -- permissions remain exactly what company/employees/*.yaml's existing `permissions` field grants. Add execution/report traceability: record skill id, skill version, and manifest/package digest alongside the existing employee_version traceability from v0.4.1 (reports.employee_versions), via an additive, idempotent DB migration (new column/table only, never rename/drop). Old reports without this data must continue to open/render normally. Take a production DB backup before deploy and verify integrity before and after.",
