@@ -14,6 +14,10 @@ All notable changes to Ego OS are recorded here, newest first. See `IMPLEMENTATI
 ### Fixed
 
 - On a QA `REVISE` cycle, a tool-using specialist's pre-revision artifacts were kept alongside the revised ones instead of being replaced, showing duplicate artifact cards for the same file. Found live while verifying Presentation Website generation; also affects Document/Spreadsheet Generation revisions.
+- The task-submission form's loading state disabled the request textarea synchronously in the `submit` handler; since a browser builds the form's entry list *after* that handler runs, the disabled field's value was silently dropped, so `request_text` never reached the server on a real browser submission (curl-based testing never exercised the page's JS, so this went unnoticed through v0.1-v0.4 until reported live). Fixed by using `readOnly` instead of `disabled`.
+- Dropping a file directly onto the request textarea (a natural expectation) did nothing, since a plain `<textarea>` has no file-drop handling — the file silently went nowhere while looking, to the Owner, like it had been attached. Added real drag-and-drop support that routes a dropped file into the actual file input.
+- nginx's default `client_max_body_size` (1MB) silently rejected any realistically-sized presentation deck with a 413 before it ever reached the app -- reproduced live with a 47.8MB test PDF. Raised to 100m on the `os.fiveseven.ru` site.
+- A specialist with `build_presentation_sites` had no way to know whether a file was actually attached to its task and sometimes guessed wrong, telling the Owner to attach a PDF without ever attempting the tool even when a real file was present. Fixed by stating the actual fact (attached or not, and the filename) directly in the specialist's prompt instead of leaving it to guess from the request's wording.
 
 ## [v0.3.0] — "Operational Company" (untagged)
 

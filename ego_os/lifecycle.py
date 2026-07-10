@@ -101,6 +101,21 @@ def _draft_employee_proposal(request_text, gap_reason):
     return fields, in_tok, out_tok, cost
 
 
+def _attachment_line(task_id):
+    """Whether a file was actually attached to this task is a fact the
+    server already knows -- the specialist shouldn't have to guess it from
+    the wording of the request. Found live: a specialist sometimes assumed
+    no attachment existed and told the Owner to attach one without ever
+    attempting the tool call, even when a real file was uploaded and
+    present on disk."""
+    upload_dir = tools.UPLOADS_DIR / str(task_id)
+    if upload_dir.is_dir():
+        names = sorted(p.name for p in upload_dir.iterdir() if p.suffix.lower() in (".zip", ".pdf"))
+        if names:
+            return f"Fact: an attachment was provided for this task: {', '.join(names)}.\n\n"
+    return "Fact: no file attachment was provided for this task.\n\n"
+
+
 def _tool_prompt_block(permissions):
     available = tools.available_tools(permissions)
     if not available:
@@ -126,9 +141,13 @@ def _run_specialist(specialist_id, title, mission, request_text, memory_context,
     if memory_context:
         context_block = "Prior context from this company's memory:\n" + "\n".join(f"- {m}" for m in memory_context) + "\n\n"
     revision_block = f"\n\nA QA reviewer asked for a revision: {feedback}\nProduce a corrected version." if feedback else ""
+    # Only relevant for a specialist whose tools actually consume an
+    # upload -- stating it for everyone else would just be noise.
+    attachment_block = _attachment_line(task_id) if "build_presentation_sites" in permissions else ""
     prompt = (
         f"You are the {title} at a digital company. Mission: {mission}\n\n"
         f"{_today_line()}"
+        f"{attachment_block}"
         f"{context_block}"
         f"Fulfil this request from the Owner as a clear, complete artifact:\n\n{request_text}"
         f"{revision_block}"
