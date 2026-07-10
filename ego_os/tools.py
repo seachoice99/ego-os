@@ -235,7 +235,11 @@ _PRESENTATION_HTML = """<!doctype html>
     <div class="deck" id="deck">
 {slides}
     </div>
-    <div class="deck-counter"><span id="deck-current">1</span> / {count}</div>
+    <div class="deck-nav">
+      <button type="button" class="deck-nav-btn" id="deck-prev" aria-label="Previous slide">&#9650;</button>
+      <span class="deck-counter"><span id="deck-current">1</span> / {count}</span>
+      <button type="button" class="deck-nav-btn" id="deck-next" aria-label="Next slide">&#9660;</button>
+    </div>
   </div>
 </div>
 <script src="script.js"></script>
@@ -244,28 +248,72 @@ _PRESENTATION_HTML = """<!doctype html>
 """
 
 _PRESENTATION_CSS = """* { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; background: #0b0d12; color: #e8e8ec; font-family: system-ui, sans-serif; }
+html, body { margin: 0; padding: 0; height: 100%; background: #0b0d12; color: #e8e8ec; font-family: system-ui, sans-serif; }
 .viewer-shell { display: flex; height: 100vh; }
-.thumb-panel { width: 110px; flex-shrink: 0; overflow-y: auto; background: #111319; border-right: 1px solid #22262f; padding: 0.6rem 0.4rem; }
-.thumb { display: block; width: 100%; background: none; border: 2px solid transparent; border-radius: 6px; padding: 0; margin-bottom: 0.5rem; cursor: pointer; position: relative; overflow: hidden; }
-.thumb img { width: 100%; display: block; opacity: 0.55; transition: opacity 0.15s; }
-.thumb span { position: absolute; bottom: 2px; right: 4px; font-size: 0.65rem; background: rgba(0,0,0,0.6); padding: 0 3px; border-radius: 3px; }
+.thumb-panel {
+  width: clamp(140px, 15vw, 220px); flex-shrink: 0; overflow-y: auto;
+  background: #111319; border-right: 1px solid #22262f; padding: 0.8rem 0.6rem;
+  display: flex; flex-direction: column; gap: 0.6rem; justify-content: space-evenly;
+}
+.thumb {
+  display: block; width: 100%; aspect-ratio: 16 / 9; flex-shrink: 0;
+  background: none; border: 2px solid transparent; border-radius: 6px;
+  padding: 0; cursor: pointer; position: relative; overflow: hidden;
+}
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0.55; transition: opacity 0.15s; }
+.thumb span {
+  position: absolute; top: 4px; left: 4px; font-size: 0.8rem; font-weight: 700;
+  color: #fff; background: rgba(0,0,0,0.7); padding: 0.05rem 0.4rem; border-radius: 4px;
+}
 .thumb:hover img, .thumb.active img { opacity: 1; }
 .thumb.active { border-color: var(--accent); }
+.thumb.active span { background: var(--accent); }
 .main-viewer { flex: 1; overflow-y: scroll; scroll-snap-type: y proximity; position: relative; }
 .slide-frame { scroll-snap-align: start; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
 .slide { max-width: 100%; text-align: center; }
 .slide img { max-width: 100%; max-height: 92vh; display: block; margin: 0 auto; border-radius: 4px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
 .slide-caption { color: #aab; margin-top: 0.8rem; font-size: 0.95rem; }
-.deck-counter { position: fixed; right: 1rem; bottom: 1rem; background: rgba(0,0,0,0.55); color: var(--accent); padding: 0.3rem 0.7rem; border-radius: 999px; font-size: 0.85rem; font-weight: 600; }
+.deck-nav {
+  position: fixed; right: 1rem; bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;
+  background: rgba(0,0,0,0.55); border-radius: 999px; padding: 0.3rem 0.5rem;
+}
+.deck-nav-btn {
+  width: 1.8rem; height: 1.8rem; border-radius: 50%; border: none; cursor: pointer;
+  background: rgba(255,255,255,0.08); color: var(--accent); font-size: 0.8rem;
+  display: flex; align-items: center; justify-content: center; line-height: 1;
+}
+.deck-nav-btn:hover { background: var(--accent); color: #0b0d12; }
+.deck-nav-btn:disabled { opacity: 0.3; cursor: default; background: rgba(255,255,255,0.08); color: var(--accent); }
+.deck-counter { color: var(--accent); font-size: 0.85rem; font-weight: 600; padding: 0 0.2rem; }
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 4px; }
 """
 
 _PRESENTATION_JS = """(function () {
   var counter = document.getElementById('deck-current');
+  var prevBtn = document.getElementById('deck-prev');
+  var nextBtn = document.getElementById('deck-next');
   var thumbs = Array.prototype.slice.call(document.querySelectorAll('.thumb'));
   var slides = Array.prototype.slice.call(document.querySelectorAll('.slide-frame'));
+  var current = 1;
+
+  function goTo(index) {
+    index = Math.max(1, Math.min(slides.length, index));
+    var target = slides[index - 1];
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function updateActive(index) {
+    current = index;
+    counter.textContent = index;
+    thumbs.forEach(function (t) { t.classList.remove('active'); });
+    if (thumbs[index - 1]) {
+      thumbs[index - 1].classList.add('active');
+      thumbs[index - 1].scrollIntoView({ block: 'nearest' });
+    }
+    prevBtn.disabled = index <= 1;
+    nextBtn.disabled = index >= slides.length;
+  }
 
   thumbs.forEach(function (btn) {
     btn.addEventListener('click', function () {
@@ -274,19 +322,26 @@ _PRESENTATION_JS = """(function () {
     });
   });
 
+  prevBtn.addEventListener('click', function () { goTo(current - 1); });
+  nextBtn.addEventListener('click', function () { goTo(current + 1); });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowUp' || e.key === 'PageUp') { e.preventDefault(); goTo(current - 1); }
+    if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); goTo(current + 1); }
+  });
+
   if ('IntersectionObserver' in window) {
     var observer = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
         if (entry.isIntersecting) {
-          var index = slides.indexOf(entry.target) + 1;
-          counter.textContent = index;
-          thumbs.forEach(function (t) { t.classList.remove('active'); });
-          if (thumbs[index - 1]) thumbs[index - 1].classList.add('active');
+          updateActive(slides.indexOf(entry.target) + 1);
         }
       });
     }, { threshold: 0.6 });
     slides.forEach(function (s) { observer.observe(s); });
   }
+
+  updateActive(1);
 })();
 """
 

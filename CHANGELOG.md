@@ -21,6 +21,12 @@ All notable changes to Ego OS are recorded here, newest first. See `IMPLEMENTATI
 - A specialist with `build_presentation_sites` had no way to know whether a file was actually attached to its task and sometimes guessed wrong, telling the Owner to attach a PDF without ever attempting the tool even when a real file was present. Fixed by stating the actual fact (attached or not, and the filename) directly in the specialist's prompt instead of leaving it to guess from the request's wording.
 - A generic request without an explicit "As Designer..." framing (e.g. "сделай сайт из этого pdf") triggered Capability Gap Handling instead of matching the already-capable Designer -- reproduced live, drafted a redundant "PDF-to-Web Conversion Specialist" proposal. `designer.yaml`'s mission/capabilities weren't concrete enough for the Orchestrator's staffing model to reliably connect a plain "PDF/website" request to Designer. Made the roster line explicit (mentions PDF/zip and "no other role can do this" directly, added a `pdf_to_website_conversion` capability); re-verified against 8 phrasings including the exact one that failed, all matched Designer.
 
+### Changed (generated presentation site template)
+
+- The thumbnail nav rail had no real up/down paging -- only click-a-thumbnail or scroll. Added actual `Prev`/`Next` buttons plus keyboard support (arrow keys, Page Up/Down, Space).
+- The thumbnail rail was a fixed narrow 110px regardless of screen size or slide count, leaving a large empty gap below a short deck. Now a responsive `clamp(140px, 15vw, 220px)` width with thumbnails evenly distributed to fill the available height.
+- Slide numbers on each thumbnail were a small, low-contrast bottom-right badge, easy to miss. Now a larger, high-contrast badge in the top-left corner, highlighted in the deck's accent color on the active slide.
+
 ## [v0.3.0] — "Operational Company" (untagged)
 
 All four planned v0.3 capabilities shipped, verified end to end.
