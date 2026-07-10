@@ -100,6 +100,15 @@ CREATE TABLE IF NOT EXISTS execution_events (
     duration_ms INTEGER,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS skill_audit_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_id TEXT NOT NULL,
+    skill_version TEXT,
+    event_type TEXT NOT NULL,
+    detail TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -456,6 +465,69 @@ def get_execution_events(task_id):
         return conn.execute(
             "SELECT * FROM execution_events WHERE task_id = ? ORDER BY id", (task_id,)
         ).fetchall()
+    finally:
+        conn.close()
+
+
+_SKILL_AUDIT_EVENT_TYPES = {
+    "discovered", "created", "validated", "attached", "detached",
+    "deprecated", "revoked", "resolution_failure",
+}
+
+
+def log_skill_audit_event(skill_id, event_type, skill_version=None, detail=None):
+    """Append-only Skill audit trail (SR-04), kept as its own table --
+    never mixed into the immutable Skill package on disk. Only
+    operational facts: which skill, what happened, when -- never a raw
+    prompt, a credential, or hidden chain-of-thought."""
+    if event_type not in _SKILL_AUDIT_EVENT_TYPES:
+        raise ValueError(f"invalid skill audit event_type: {event_type!r}")
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO skill_audit_events (skill_id, skill_version, event_type, detail) VALUES (?, ?, ?, ?)",
+            (skill_id, skill_version, event_type, detail),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_skill_audit_events(skill_id=None):
+    conn = get_connection()
+    try:
+        if skill_id is None:
+            return conn.execute("SELECT * FROM skill_audit_events ORDER BY id DESC").fetchall()
+        return conn.execute(
+            "SELECT * FROM skill_audit_events WHERE skill_id = ? ORDER BY id DESC", (skill_id,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def get_last_skill_check(skill_id):
+    conn = get_connection()
+    try:
+        return conn.execute(
+            "SELECT * FROM skill_audit_events WHERE skill_id = ? ORDER BY id DESC LIMIT 1", (skill_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def get_employees_using_skill(skill_id, version=None):
+    """Which Employees reference this Skill (optionally pinned to one
+    exact version) -- scans the small `employees` table's own `skills`
+    JSON column rather than needing a join table."""
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT id, title, skills FROM employees ORDER BY id").fetchall()
+        matches = []
+        for r in rows:
+            for ref in json.loads(r["skills"]):
+                if ref.get("id") == skill_id and (version is None or ref.get("version") == version):
+                    matches.append({"id": r["id"], "title": r["title"], "version": ref.get("version")})
+        return matches
     finally:
         conn.close()
 

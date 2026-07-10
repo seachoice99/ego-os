@@ -2,6 +2,19 @@
 
 All notable changes to Ego OS are recorded here, newest first. See `IMPLEMENTATION_ROADMAP.md` for the forward-looking plan this changelog reports against.
 
+## [Unreleased] — Skills UI and audit (SR-04)
+
+### Added
+
+- **`GET /skills`** — read-only list of every Skill in the Registry: id, name, version, trust state, lifecycle state, origin type, license, digest status, which Employees use it, requirements, permissions required, and last check timestamp. A malformed manifest surfaces its error inline instead of breaking the page.
+- **`GET /skills/{skill_id}/{version}`** — read-only manifest detail page: status, requirements, Employees using this exact version, and the full audit trail for this Skill. A revoked Skill stays visible here (via `skills.get_manifest_for_display`, which does not fail closed) but remains unresolvable for execution — `get_exact_version`/`resolve_compatible_version` still fail closed exactly as before.
+- **`skill_audit_events` table** (`ego_os/store.py`) — a new, append-only SQLite table, deliberately kept separate from the immutable Skill package on disk. Records `discovered/created/validated/attached/detached/deprecated/revoked/resolution_failure` events, each with only operational facts (skill id/version, event type, a short detail string) — never a raw prompt, credential, or hidden chain-of-thought. Viewing the list page logs a `validated` event per Skill; `employees.sync_from_registry()` now diffs each Employee's Skill references and logs `attached`/`detached` on real changes; a fail-closed Skill resolution failure (`ego_os/lifecycle.py`) logs `resolution_failure`.
+- Both routes rely on the app-wide Owner Basic Auth + CSRF dependency already applied to every route — no new auth wiring needed. Jinja2's default autoescaping (no `| safe` used anywhere on manifest content) keeps manifest fields HTML-safe even if a Skill's `name`/`description` contained markup.
+
+### Verified
+
+- 10 new tests: list page, detail page, auth required (401 unauthenticated on both routes), HTML escaping of manifest content, unknown skill 404, revoked skill visible-but-unresolvable, audit events append on each list-page view, attach/detach events logged via `sync_from_registry`, audit trail never contains the Owner password, Employee-usage mapping shown on both pages, and existing routes (`/`, `/dashboard`, `/employees/{id}`) unaffected.
+
 ## [Unreleased] — First internal Skill: structured_reporting (SR-03)
 
 ### Added

@@ -393,6 +393,13 @@ def run(task_id: int, project_id: int, request_text: str):
             task_id, step="skill_resolution", employee_id=specialist_id, employee_version=roster["version"],
             status="error", detail=str(exc),
         )
+        employee_skill_refs = roster.get("skills") or [{}]
+        store.log_skill_audit_event(
+            employee_skill_refs[0].get("id") or "unknown",
+            "resolution_failure",
+            skill_version=employee_skill_refs[0].get("version"),
+            detail=f"Task #{task_id}, employee '{specialist_id}': {exc}",
+        )
         store.set_employee_status("orchestrator", "idle")
         raise
     primary_skill = resolved_skills[0] if resolved_skills else None

@@ -259,6 +259,20 @@ def get_exact_version(skill_id: str, version: str, registry_root: Path = None) -
     return _fail_closed_if_revoked(matches[0])
 
 
+def get_manifest_for_display(skill_id: str, version: str, registry_root: Path = None) -> dict:
+    """Like get_exact_version, but does NOT fail closed on a revoked
+    Skill -- for read-only display only (SR-04's Skill detail page). A
+    revoked Skill must stay visible in the UI; it just can never be
+    resolved for execution via get_exact_version/resolve_compatible_version,
+    which still fail closed exactly as before."""
+    root = Path(registry_root) if registry_root is not None else REGISTRY_ROOT
+    manifests = _load_all_versions(skill_id, root)
+    matches = [m for m in manifests if m["version"] == version]
+    if not matches:
+        raise SkillNotFoundError(f"{skill_id}@{version} not found")
+    return matches[0]
+
+
 def resolve_compatible_version(skill_id: str, version_range: str = None, registry_root: Path = None) -> dict:
     """Resolve the highest trusted (approved + active) version
     satisfying version_range (or simply the highest trusted version if

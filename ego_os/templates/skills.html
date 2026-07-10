@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Ego OS — Skills</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 { margin-bottom: 0.2rem; }
+    .subtitle { color: #666; margin-top: 0; }
+    section { margin-top: 1.5rem; border: 1px solid #e2e2e2; border-radius: 10px; padding: 1.2rem 1.4rem; background: #fff; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+    .tag { display: inline-block; background: #f1f5f9; border-radius: 4px; padding: 0.15rem 0.5rem; margin: 0.1rem; font-size: 0.8rem; }
+    .trust-approved { color: #15803d; font-weight: 600; }
+    .trust-revoked { color: #dc2626; font-weight: 600; }
+    .trust-deprecated { color: #b45309; font-weight: 600; }
+    .trust-discovered, .trust-quarantined, .trust-reviewing { color: #666; }
+    .error-row { color: #dc2626; }
+    a { color: #1d4ed8; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <p><a href="/dashboard">&larr; back to dashboard</a></p>
+  <h1>Skills</h1>
+  <p class="subtitle">Read-only Registry view — {{ skills | length }} entr{{ "y" if skills | length == 1 else "ies" }}.</p>
+
+  <section>
+    {% if skills %}
+    <table>
+      <tr>
+        <th>ID</th><th>Version</th><th>Trust</th><th>Lifecycle</th><th>Origin</th><th>License</th>
+        <th>Digest</th><th>Used by</th><th>Requirements</th><th>Last check</th>
+      </tr>
+      {% for s in skills %}
+      {% if s.error %}
+      <tr class="error-row">
+        <td>{{ s.id }}</td><td>{{ s.version }}</td>
+        <td colspan="8">Invalid: {{ s.error }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td><a href="/skills/{{ s.id }}/{{ s.version }}">{{ s.id }}</a></td>
+        <td>{{ s.version }}</td>
+        <td class="trust-{{ s.trust_state }}">{{ s.trust_state }}</td>
+        <td>{{ s.lifecycle_state }}</td>
+        <td>{{ s.origin_type }}</td>
+        <td>{{ s.license }}</td>
+        <td>{{ s.digest_status }}</td>
+        <td>
+          {% for e in s.employees %}<a href="/employees/{{ e.id }}">{{ e.title }}</a>{% if not loop.last %}, {% endif %}{% else %}&mdash;{% endfor %}
+        </td>
+        <td>
+          {% for p in s.permissions_required %}<span class="tag">{{ p }}</span>{% else %}&mdash;{% endfor %}
+        </td>
+        <td>{{ s.last_check or "never" }}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </table>
+    {% else %}
+    <p>No Skills registered yet.</p>
+    {% endif %}
+  </section>
+</body>
+</html>

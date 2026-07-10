@@ -13,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 
 load_dotenv()
 
-from ego_os import employees, store, tools, worker  # noqa: E402
+from ego_os import employees, skills, store, tools, worker  # noqa: E402
 from ego_os.auth import require_owner, verify_csrf  # noqa: E402
 
 app = FastAPI(title="Ego OS", dependencies=[Depends(require_owner), Depends(verify_csrf)])
@@ -173,6 +173,61 @@ def project_memory(request: Request, project_id: int):
         request,
         "project_memory.html",
         {"project": project, "entries": store.get_memory_entries(project_id)},
+    )
+
+
+@app.get("/skills")
+def skills_list(request: Request):
+    """Read-only (SR-04): lists every Skill under the Registry, valid or
+    not. Viewing this page is itself the 'last check' -- each valid
+    entry logs a 'validated' Skill audit event. This route never
+    mutates the Registry, installs anything, or executes Skill content."""
+    entries = skills.list_skills()
+    rows = []
+    for entry in entries:
+        if "error" in entry:
+            rows.append({"id": entry["id"], "version": entry["version"], "error": entry["error"]})
+            continue
+        store.log_skill_audit_event(
+            entry["id"], "validated", skill_version=entry["version"], detail="Listed on /skills"
+        )
+        last_check = store.get_last_skill_check(entry["id"])
+        requirements = entry.get("requirements") or {}
+        rows.append({
+            "id": entry["id"],
+            "name": entry.get("name"),
+            "version": entry["version"],
+            "trust_state": entry["trust"]["state"],
+            "lifecycle_state": entry["lifecycle"]["state"],
+            "origin_type": (entry.get("origin") or {}).get("type"),
+            "license": (entry.get("origin") or {}).get("license"),
+            "digest_status": "verified",
+            "employees": store.get_employees_using_skill(entry["id"], entry["version"]),
+            "requirements": requirements,
+            "permissions_required": requirements.get("permissions", []),
+            "last_check": last_check["created_at"] if last_check else None,
+        })
+    return templates.TemplateResponse(request, "skills.html", {"skills": rows})
+
+
+@app.get("/skills/{skill_id}/{version}")
+def skill_detail(request: Request, skill_id: str, version: str):
+    """Read-only manifest detail (SR-04). A revoked Skill stays visible
+    here -- it's just never resolved for execution
+    (get_exact_version/resolve_compatible_version still fail closed on
+    it). Never executes Skill content, never mutates the Registry."""
+    try:
+        manifest = skills.get_manifest_for_display(skill_id, version)
+    except skills.SkillNotFoundError:
+        raise HTTPException(status_code=404)
+    return templates.TemplateResponse(
+        request,
+        "skill_detail.html",
+        {
+            "manifest": manifest,
+            "employees": store.get_employees_using_skill(skill_id, version),
+            "audit_events": store.get_skill_audit_events(skill_id),
+        },
     )
 
 
