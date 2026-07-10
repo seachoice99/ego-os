@@ -98,6 +98,18 @@ This is the primary implementation plan for Ego OS. It sequences work that is al
 
 ---
 
+## 📋 Post-v0.5 Initiative — Skills and Capability Management
+
+**Objective:** make reusable capabilities independent, versioned Definitions that multiple Employees can compose, while keeping Tools, Knowledge, permissions, Gate Control, and provider adapters separate.
+
+**Sequence:** definitions and manifest → local Skill Registry → first internal Skills → controlled community intake → Capability Manager MVP → controlled autonomy.
+
+**Scheduling:** ADR and design review can happen now. Implementation must not preempt current v0.5 critical work unless the Owner explicitly reprioritizes it. Registry foundations are the nearest eligible milestone after that decision; community intake and Capability Manager are later. Automated integration is deliberately deferred until permissions, sandboxing, evaluations, audit, rollback, and kill switches have operational evidence.
+
+**Dependencies:** accepted ADR-0004 and ADR-0005. Full task sequence and approval gates: `tasks/SKILLS_AND_CAPABILITY_MANAGEMENT.md`. Architecture: `architecture/008_SKILLS_AND_CAPABILITY_MANAGEMENT.md`.
+
+---
+
 ## ⏳ v1.0 — Autonomous Digital Company
 
 **Objective:** the full vision in `docs/000_VISION_2.md` and `architecture/006` realized — Operating Company (Stage 4) and Capital Allocation (Stage 5).
