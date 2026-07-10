@@ -17,6 +17,7 @@ import shutil
 import zipfile
 from pathlib import Path
 
+import fitz  # PyMuPDF
 import httpx
 from docx import Document
 from fpdf import FPDF
@@ -291,10 +292,12 @@ _PRESENTATION_JS = """(function () {
 
 
 def _build_presentation_site(site_name: str, captions, task_id: int, accent: str = None) -> str:
-    """Build and publish a real, browsable presentation website from the
-    slide images in this task's uploaded .zip archive (architecture/007's
-    MVP slice: dark theme, vertical scroll, thumbnail nav, deck counter --
-    video hotspots/portfolio grid/PDF export deliberately deferred).
+    """Build and publish a real, browsable presentation website from this
+    task's uploaded slide deck -- a .zip of images, or a .pdf (each page
+    rendered to an image) -- per architecture/007's MVP slice: dark theme,
+    vertical scroll, thumbnail nav, deck counter (video hotspots/portfolio
+    grid/derived-PDF-export deliberately deferred; that's the site being
+    exported back to PDF, unrelated to accepting a PDF as input here).
 
     Deliberately one deterministic tool call rather than a multi-step
     agent loop: the image resize / HTML generation / publish steps are
@@ -313,29 +316,43 @@ def _build_presentation_site(site_name: str, captions, task_id: int, accent: str
         raise ToolError("accent must be a hex color like #3b82f6")
 
     task_uploads = UPLOADS_DIR / str(task_id)
-    archives = sorted(task_uploads.glob("*.zip")) if task_uploads.is_dir() else []
-    if not archives:
+    sources = sorted(
+        p for p in task_uploads.iterdir() if p.suffix.lower() in (".zip", ".pdf")
+    ) if task_uploads.is_dir() else []
+    if not sources:
         raise ToolError(
-            "no uploaded slide archive found for this task -- the Owner must attach a .zip of "
-            "slide images (.png/.jpg/.jpeg) when submitting the task"
+            "no uploaded slide deck found for this task -- the Owner must attach a .zip of "
+            "slide images (.png/.jpg/.jpeg) or a .pdf deck when submitting the task"
         )
 
     source_dir = GENERATED_DIR / str(task_id) / "source"
     source_dir.mkdir(parents=True, exist_ok=True)
     source_dir_resolved = source_dir.resolve()
-    with zipfile.ZipFile(archives[0]) as zf:
-        for member in zf.namelist():
-            if Path(member).suffix.lower() not in _SLIDE_IMAGE_EXTS:
-                continue
-            member_path = (source_dir / Path(member).name).resolve()
-            if not member_path.is_relative_to(source_dir_resolved):
-                continue  # zip-slip guard: never extract outside source_dir
-            with zf.open(member) as src, open(member_path, "wb") as dst:
-                shutil.copyfileobj(src, dst)
+    source_file = sources[0]
+
+    if source_file.suffix.lower() == ".zip":
+        with zipfile.ZipFile(source_file) as zf:
+            for member in zf.namelist():
+                if Path(member).suffix.lower() not in _SLIDE_IMAGE_EXTS:
+                    continue
+                member_path = (source_dir / Path(member).name).resolve()
+                if not member_path.is_relative_to(source_dir_resolved):
+                    continue  # zip-slip guard: never extract outside source_dir
+                with zf.open(member) as src, open(member_path, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+    else:
+        # .pdf: render each page to a PNG at 2x scale (~144 DPI) -- plenty
+        # of source resolution for the later resize-to-1600px-wide step,
+        # without the huge intermediate files a higher zoom would produce.
+        with fitz.open(source_file) as pdf:
+            zoom = fitz.Matrix(2, 2)
+            for page_index, page in enumerate(pdf, start=1):
+                pixmap = page.get_pixmap(matrix=zoom)
+                pixmap.save(source_dir / f"pdfpage{page_index:03d}.png")
 
     images = sorted(p for p in source_dir.iterdir() if p.suffix.lower() in _SLIDE_IMAGE_EXTS)
     if not images:
-        raise ToolError("uploaded archive contained no .png/.jpg/.jpeg images")
+        raise ToolError("uploaded slide deck contained no usable slides")
 
     site_dir = GENERATED_DIR / str(task_id) / "site"
     img_dir = site_dir / "img"
@@ -446,9 +463,10 @@ TOOLS = {
         "produces_artifact": "website",
         "description": (
             "build_presentation_site(site_name, captions, accent): build and publish a real, "
-            "browsable presentation website from the slide images in this task's uploaded .zip "
-            "archive (the Owner must attach one when submitting the task -- this fails if none "
-            "was attached). site_name is a URL slug (lowercase letters/digits/hyphens only). "
+            "browsable presentation website from this task's uploaded slide deck -- a .zip of "
+            ".png/.jpg/.jpeg images, or a .pdf (each page becomes one slide) -- attached when "
+            "the task was submitted (fails if nothing was attached). site_name is a URL slug "
+            "(lowercase letters/digits/hyphens only). "
             'captions is a JSON array of strings, one per slide in file order (use "" for none). '
             "accent is an optional hex color for links/highlights (default #3b82f6). "
             'Args as JSON: {"site_name": "t1-tender-pitch", "captions": ["Cover", "Agenda", ""], '

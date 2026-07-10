@@ -6,8 +6,8 @@ All notable changes to Ego OS are recorded here, newest first. See `IMPLEMENTATI
 
 ### Added
 
-- **File Intake** — an optional multipart `attachment` field on task submission, saved to `ego_os/uploads/<task_id>/` before the lifecycle runs.
-- **Presentation Website Generation** — `build_presentation_site(site_name, captions, accent)`, a new tool gated on Designer's new `build_presentation_sites` permission. Extracts a task's uploaded `.zip` of slide images, resizes each with Pillow, generates a self-contained dark-theme scroll deck (thumbnail nav, deck counter, no build step, per `architecture/007_PRESENTATION_WEBSITE_FORMAT.md`'s fixed visual contract) and publishes it to `PRESENTATIONS_DIR`, served at `/p/<site_name>/`. One deterministic tool call, not a multi-step agent loop — no change to the existing one-tool-call-per-turn execution model.
+- **File Intake** — an optional multipart `attachment` field on task submission (`.zip` of slide images or a `.pdf` deck), saved to `ego_os/uploads/<task_id>/` before the lifecycle runs.
+- **Presentation Website Generation** — `build_presentation_site(site_name, captions, accent)`, a new tool gated on Designer's new `build_presentation_sites` permission. Extracts slide images from a task's uploaded `.zip`, or renders each page of an uploaded `.pdf` via PyMuPDF, resizes each with Pillow, generates a self-contained dark-theme scroll deck (thumbnail nav, deck counter, no build step, per `architecture/007_PRESENTATION_WEBSITE_FORMAT.md`'s fixed visual contract) and publishes it to `PRESENTATIONS_DIR`, served at `/p/<site_name>/`. One deterministic tool call, not a multi-step agent loop — no change to the existing one-tool-call-per-turn execution model. Verified with a real 20-page PDF.
 - **Designer activated as a fifth specialist** — added to `EXECUTION_CAPABILITY` (`presentation_design`); `designer.yaml` bumped to v1.1.
 - A new "website" artifact type rendered on the task page as a live link, alongside the existing text/document/spreadsheet types.
 

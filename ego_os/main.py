@@ -151,15 +151,15 @@ def submit_task(
     attachment: Optional[UploadFile] = File(None),
 ):
     """A file attachment is optional and currently only used by the
-    Presentation Website capability (v0.4): a .zip of slide images, saved
-    before the lifecycle runs so a specialist's tool call can find it by
-    task_id."""
+    Presentation Website capability (v0.4): a .zip of slide images or a
+    .pdf deck, saved before the lifecycle runs so a specialist's tool call
+    can find it by task_id."""
     if store.get_project(project_id) is None:
         project_id = store.ensure_default_project()
     task_id = store.create_task(request_text, project_id)
     if attachment is not None and attachment.filename:
-        if not attachment.filename.lower().endswith(".zip"):
-            raise HTTPException(status_code=400, detail="attachment must be a .zip archive of slide images")
+        if not attachment.filename.lower().endswith((".zip", ".pdf")):
+            raise HTTPException(status_code=400, detail="attachment must be a .zip of slide images or a .pdf deck")
         upload_dir = tools.UPLOADS_DIR / str(task_id)
         upload_dir.mkdir(parents=True, exist_ok=True)
         target = upload_dir / Path(attachment.filename).name
