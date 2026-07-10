@@ -13,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 
 load_dotenv()
 
-from ego_os import employees, lifecycle, store, tools  # noqa: E402
+from ego_os import employees, store, tools, worker  # noqa: E402
 from ego_os.auth import require_owner, verify_csrf  # noqa: E402
 
 app = FastAPI(title="Ego OS", dependencies=[Depends(require_owner), Depends(verify_csrf)])
@@ -102,6 +102,16 @@ def on_startup():
     store.init_db()
     employees.sync_from_registry()
     store.ensure_default_project()
+    # A task left 'running' from before this boot was interrupted by the
+    # restart -- mark it failed rather than leaving it stuck forever.
+    # A task still 'queued' never actually started, so it's safe to requeue.
+    worker.recover_interrupted_tasks()
+    worker.start()
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    worker.stop()
 
 
 @app.get("/")
@@ -210,8 +220,15 @@ def submit_task(
 ):
     """A file attachment is optional and currently only used by the
     Presentation Website capability (v0.4): a .zip of slide images or a
-    .pdf deck, saved before the lifecycle runs so a specialist's tool call
-    can find it by task_id."""
+    .pdf deck, staged before the task exists so a rejected upload never
+    leaves an inconsistent task row.
+
+    The Task Lifecycle itself now runs on the background worker (v0.4.1)
+    instead of inline here -- this handler only validates, persists, and
+    enqueues, so a heavy task (multiple LLM calls, PDF rendering) can no
+    longer hold an HTTP request open long enough to hit a proxy timeout
+    (found live: nginx killed a real client connection at 60s while a
+    task that took ~96s kept running server-side)."""
     if store.get_project(project_id) is None:
         project_id = store.ensure_default_project()
 
@@ -226,7 +243,7 @@ def submit_task(
         shutil.move(str(staged_attachment), str(final_dir / staged_attachment.name))
         shutil.rmtree(staged_attachment.parent, ignore_errors=True)
 
-    lifecycle.run(task_id, project_id, request_text)
+    worker.enqueue(task_id)
     return RedirectResponse(url=f"/tasks/{task_id}", status_code=303)
 
 

@@ -1,10 +1,15 @@
 import json
 import re
+import time
 from datetime import date
 
 from ego_os import model_provider, store, tools
 
 _TOOL_REQUEST_RE = re.compile(r"TOOL_REQUEST:\s*(\S+)")
+
+
+def _elapsed_ms(start: float) -> int:
+    return int((time.perf_counter() - start) * 1000)
 
 
 def _today_line():
@@ -168,8 +173,8 @@ def _run_specialist(specialist_id, title, mission, request_text, memory_context,
     # before or after that one value.
     match = _TOOL_REQUEST_RE.search(text)
     if match:
-        tool_result_text, event_detail, artifact = _execute_tool_request(text, match, permissions, task_id)
-        tool_events.append({"step": "tool_use", "employee": specialist_id, "detail": event_detail})
+        tool_result_text, event_info, artifact = _execute_tool_request(text, match, permissions, task_id)
+        tool_events.append({"step": "tool_use", "employee": specialist_id, **event_info})
         if artifact:
             artifacts.append(artifact)
 
@@ -191,8 +196,10 @@ def _execute_tool_request(text, match, permissions, task_id):
     text and run it through the Tool Framework. Never raises -- a bad
     request or a denied permission comes back as a tool result the
     specialist can react to, same as any other tool outcome. Returns
-    (result_text, event_detail, artifact_or_None) -- artifact is filled in
-    only for a successful call to a tool marked produces_artifact, with an
+    (result_text, event_info, artifact_or_None) -- event_info is a dict
+    with the fields execution-event logging needs (detail, tool_name, a
+    JSON-serialized args summary, and status); artifact is filled in only
+    for a successful call to a tool marked produces_artifact, with an
     explicit `type` (e.g. "document", "spreadsheet") taken from the tool's
     registry entry rather than guessed from the filename, so the UI can
     offer it as a typed, downloadable artifact."""
@@ -209,9 +216,21 @@ def _execute_tool_request(text, match, permissions, task_id):
             artifact = {"type": artifact_type, "filename": args["filename"]}
         else:
             artifact = None
-        return result, f"Used tool '{tool_name}' with args {args}.", artifact
+        event_info = {
+            "detail": f"Used tool '{tool_name}' with args {args}.",
+            "tool_name": tool_name,
+            "tool_args_summary": json.dumps(args),
+            "status": "ok",
+        }
+        return result, event_info, artifact
     except (tools.ToolError, ValueError, TypeError, json.JSONDecodeError) as exc:
-        return f"Tool error: {exc}", f"Tool request for '{tool_name}' failed: {exc}", None
+        event_info = {
+            "detail": f"Tool request for '{tool_name}' failed: {exc}",
+            "tool_name": tool_name,
+            "tool_args_summary": None,
+            "status": "error",
+        }
+        return f"Tool error: {exc}", event_info, None
 
 
 def _run_qa(request_text, draft_text):
@@ -230,23 +249,43 @@ def run(task_id: int, project_id: int, request_text: str):
 
     QA is a real gate: a REVISE verdict sends the draft back for exactly
     one corrected attempt before delivery, rather than being recorded and
-    ignored."""
+    ignored.
+
+    Every significant step is also written to execution_events (v0.4.1)
+    as it happens, incrementally -- unlike reports.timeline (still built
+    here too, unchanged, for backward-compatible rendering), which is
+    only ever written once, at the very end. A crash mid-task now leaves
+    a real, queryable operational record instead of nothing."""
     timeline = []
     total_in = total_out = 0
     total_cost = 0.0
 
+    meta_roster = {r["id"]: r for r in store.get_roster_summary(["orchestrator", "qa"])}
+    orchestrator_version = meta_roster.get("orchestrator", {}).get("version")
+    qa_version = meta_roster.get("qa", {}).get("version")
+
     # Intake
     timeline.append({"step": "intake", "employee": "orchestrator", "detail": "Received request from Owner."})
+    store.log_execution_event(
+        task_id, step="intake", employee_id="orchestrator", employee_version=orchestrator_version,
+        status="ok", detail="Received request from Owner.",
+    )
 
     # Planning
     store.update_task_status(task_id, "planning")
     store.set_employee_status("orchestrator", "assigned")
     memory_context = store.get_recent_memory(project_id)
     timeline.append({"step": "planning", "employee": "orchestrator", "detail": "Reviewed request and prior project memory."})
+    store.log_execution_event(
+        task_id, step="planning", employee_id="orchestrator", employee_version=orchestrator_version,
+        status="ok", detail="Reviewed request and prior project memory.",
+    )
 
     # Staffing
     store.update_task_status(task_id, "staffing")
+    staffing_start = time.perf_counter()
     specialist_id, gap_reason, s_in, s_out, s_cost = _select_specialist(request_text)
+    staffing_duration_ms = _elapsed_ms(staffing_start)
     total_in += s_in
     total_out += s_out
     total_cost += s_cost
@@ -259,7 +298,16 @@ def run(task_id: int, project_id: int, request_text: str):
             "step": "staffing", "employee": "orchestrator",
             "detail": f"No existing specialist matches this request: {gap_reason}",
         })
+        store.log_execution_event(
+            task_id, step="staffing", employee_id="orchestrator", employee_version=orchestrator_version,
+            capability="delegation", model=model_provider.model_for_capability("delegation"),
+            input_tokens=s_in, output_tokens=s_out, cost=s_cost, status="gap",
+            detail=f"No existing specialist matches this request: {gap_reason}",
+            duration_ms=staffing_duration_ms,
+        )
+        proposal_start = time.perf_counter()
         fields, p_in, p_out, p_cost = _draft_employee_proposal(request_text, gap_reason)
+        proposal_duration_ms = _elapsed_ms(proposal_start)
         total_in += p_in
         total_out += p_out
         total_cost += p_cost
@@ -277,44 +325,96 @@ def run(task_id: int, project_id: int, request_text: str):
             "step": "gap", "employee": "orchestrator",
             "detail": f"Drafted an Employee Creation Proposal ({fields['title']}) for Owner review.",
         })
+        store.log_execution_event(
+            task_id, step="gap", employee_id="orchestrator", employee_version=orchestrator_version,
+            capability="delegation", model=model_provider.model_for_capability("delegation"),
+            input_tokens=p_in, output_tokens=p_out, cost=p_cost, status="ok",
+            detail=f"Drafted an Employee Creation Proposal ({fields['title']}) for Owner review.",
+            duration_ms=proposal_duration_ms,
+        )
         store.update_task_status(task_id, "awaiting_approval")
         store.set_employee_status("orchestrator", "idle")
         return
 
     roster = store.get_roster_summary([specialist_id])[0]
     timeline.append({"step": "staffing", "employee": "orchestrator", "detail": f"Assigned {roster['title']} and QA Reviewer."})
+    store.log_execution_event(
+        task_id, step="staffing", employee_id="orchestrator", employee_version=orchestrator_version,
+        capability="delegation", model=model_provider.model_for_capability("delegation"),
+        input_tokens=s_in, output_tokens=s_out, cost=s_cost, status="ok",
+        detail=f"Assigned {roster['title']} and QA Reviewer.", duration_ms=staffing_duration_ms,
+    )
+    employee_versions = {"orchestrator": orchestrator_version, specialist_id: roster["version"], "qa": qa_version}
+    specialist_capability = EXECUTION_CAPABILITY[specialist_id]
 
     # Execution
     store.update_task_status(task_id, "execution")
     store.set_employee_status(specialist_id, "assigned")
+    execution_start = time.perf_counter()
     draft_text, w_in, w_out, w_cost, w_tool_events, artifacts = _run_specialist(
         specialist_id, roster["title"], roster["mission"], request_text, memory_context, roster["permissions"], task_id
     )
+    execution_duration_ms = _elapsed_ms(execution_start)
     total_in += w_in
     total_out += w_out
     total_cost += w_cost
     timeline.append({"step": "execution", "employee": specialist_id, "detail": f"Drafted a response as {roster['title']}."})
-    timeline.extend(w_tool_events)
+    store.log_execution_event(
+        task_id, step="execution", employee_id=specialist_id, employee_version=roster["version"],
+        capability=specialist_capability, model=model_provider.model_for_capability(specialist_capability),
+        input_tokens=w_in, output_tokens=w_out, cost=w_cost, status="ok",
+        detail=f"Drafted a response as {roster['title']}.", duration_ms=execution_duration_ms,
+    )
+    for event in w_tool_events:
+        timeline.append({"step": event["step"], "employee": event["employee"], "detail": event["detail"]})
+        store.log_execution_event(
+            task_id, step="tool_use", employee_id=specialist_id, employee_version=roster["version"],
+            tool_name=event.get("tool_name"), tool_args_summary=event.get("tool_args_summary"),
+            status=event.get("status"), detail=event["detail"],
+        )
 
     # QA
     store.update_task_status(task_id, "qa")
     store.set_employee_status("qa", "assigned")
+    qa_start = time.perf_counter()
     qa_note, q_in, q_out, q_cost = _run_qa(request_text, draft_text)
+    qa_duration_ms = _elapsed_ms(qa_start)
     total_in += q_in
     total_out += q_out
     total_cost += q_cost
     timeline.append({"step": "qa", "employee": "qa", "detail": qa_note})
+    store.log_execution_event(
+        task_id, step="qa", employee_id="qa", employee_version=qa_version,
+        capability="critique", model=model_provider.model_for_capability("critique"),
+        input_tokens=q_in, output_tokens=q_out, cost=q_cost,
+        status="pass" if qa_note.strip().upper().startswith("PASS") else "revise",
+        detail=qa_note, duration_ms=qa_duration_ms,
+    )
 
     if qa_note.strip().upper().startswith("REVISE"):
+        revision_start = time.perf_counter()
         draft_text, r_in, r_out, r_cost, r_tool_events, r_artifacts = _run_specialist(
             specialist_id, roster["title"], roster["mission"], request_text, memory_context,
             roster["permissions"], task_id, feedback=qa_note,
         )
+        revision_duration_ms = _elapsed_ms(revision_start)
         total_in += r_in
         total_out += r_out
         total_cost += r_cost
         timeline.append({"step": "revision", "employee": specialist_id, "detail": "Produced a corrected draft based on QA feedback."})
-        timeline.extend(r_tool_events)
+        store.log_execution_event(
+            task_id, step="revision", employee_id=specialist_id, employee_version=roster["version"],
+            capability=specialist_capability, model=model_provider.model_for_capability(specialist_capability),
+            input_tokens=r_in, output_tokens=r_out, cost=r_cost, status="ok",
+            detail="Produced a corrected draft based on QA feedback.", duration_ms=revision_duration_ms,
+        )
+        for event in r_tool_events:
+            timeline.append({"step": event["step"], "employee": event["employee"], "detail": event["detail"]})
+            store.log_execution_event(
+                task_id, step="tool_use", employee_id=specialist_id, employee_version=roster["version"],
+                tool_name=event.get("tool_name"), tool_args_summary=event.get("tool_args_summary"),
+                status=event.get("status"), detail=event["detail"],
+            )
         # The revision is a full redo of the same request, not an addition to
         # it -- if it produced its own artifacts, those replace the pre-revision
         # ones instead of accumulating alongside them (found live: a revised
@@ -322,11 +422,20 @@ def run(task_id: int, project_id: int, request_text: str):
         if r_artifacts:
             artifacts = r_artifacts
 
+        qa2_start = time.perf_counter()
         qa_note, q2_in, q2_out, q2_cost = _run_qa(request_text, draft_text)
+        qa2_duration_ms = _elapsed_ms(qa2_start)
         total_in += q2_in
         total_out += q2_out
         total_cost += q2_cost
         timeline.append({"step": "qa", "employee": "qa", "detail": qa_note})
+        store.log_execution_event(
+            task_id, step="qa", employee_id="qa", employee_version=qa_version,
+            capability="critique", model=model_provider.model_for_capability("critique"),
+            input_tokens=q2_in, output_tokens=q2_out, cost=q2_cost,
+            status="pass" if qa_note.strip().upper().startswith("PASS") else "revise",
+            detail=qa_note, duration_ms=qa2_duration_ms,
+        )
 
     store.set_employee_status(specialist_id, "idle")
     store.set_employee_status("qa", "idle")
@@ -335,6 +444,10 @@ def run(task_id: int, project_id: int, request_text: str):
     store.update_task_status(task_id, "delivered")
     store.set_employee_status("orchestrator", "idle")
     timeline.append({"step": "delivery", "employee": "orchestrator", "detail": "Delivered result and report to Owner."})
+    store.log_execution_event(
+        task_id, step="delivery", employee_id="orchestrator", employee_version=orchestrator_version,
+        status="ok", detail="Delivered result and report to Owner.",
+    )
 
     store.create_report(
         task_id=task_id,
@@ -346,6 +459,7 @@ def run(task_id: int, project_id: int, request_text: str):
         result_text=draft_text,
         qa_note=qa_note,
         artifacts=artifacts,
+        employee_versions=employee_versions,
     )
 
     # Memory Update

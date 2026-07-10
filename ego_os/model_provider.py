@@ -31,6 +31,13 @@ def _get_client():
     return _client
 
 
+def model_for_capability(capability: str) -> str:
+    """Exposed for execution-event logging (v0.4.1): which model actually
+    served a given capability, without changing complete()'s return
+    signature for every existing caller."""
+    return _CAPABILITY_MODELS[capability]
+
+
 def complete(capability: str, prompt: str, max_tokens: int = 1024):
     """Given a required capability and a prompt, return
     (text, input_tokens, output_tokens, cost). The caller never knows or

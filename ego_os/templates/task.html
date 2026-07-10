@@ -2,6 +2,9 @@
 <html>
 <head>
   <meta charset="utf-8">
+  {% if task.run_state in ("queued", "running") %}
+  <meta http-equiv="refresh" content="3">
+  {% endif %}
   <title>Ego OS — Task #{{ task.id }}</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; line-height: 1.5; }
@@ -70,6 +73,22 @@
   <h1>Task #{{ task.id }}</h1>
   <p class="request">{{ task.request_text }}</p>
   <p>Project: <strong>{{ task.project_name or 'General' }}</strong> &middot; Status: <strong>{{ task.status }}</strong></p>
+
+  {% if task.run_state in ("queued", "running") %}
+  <section class="artifact">
+    <div class="artifact-header"><span class="artifact-icon">&#9203;</span><h2>Processing</h2></div>
+    <div class="artifact-body">
+      <p>The company is {{ "queued to start" if task.run_state == "queued" else "working on" }} this task. This page refreshes automatically every few seconds.</p>
+    </div>
+  </section>
+  {% elif task.run_state == "failed" %}
+  <section class="artifact">
+    <div class="artifact-header"><span class="artifact-icon">&#10060;</span><h2>Failed</h2></div>
+    <div class="artifact-body">
+      <p>{{ task.error_message or "This task failed for an unspecified reason." }}</p>
+    </div>
+  </section>
+  {% endif %}
 
   {% if proposal %}
   <section class="artifact">
@@ -144,7 +163,7 @@
       </div>
     </div>
   </section>
-  {% elif not proposal %}
+  {% elif not proposal and task.run_state not in ("queued", "running", "failed") %}
   <p>Report not yet available.</p>
   {% endif %}
 </body>

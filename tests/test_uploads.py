@@ -97,13 +97,12 @@ def test_oversized_attachment_is_rejected(app_client, owner_credentials, csrf_he
     assert store.get_tasks() == []
 
 
-def test_valid_real_zip_is_accepted_and_staged_under_the_new_task(app_client, owner_credentials, csrf_headers, fake_model_complete, temp_env):
+def test_valid_real_zip_is_accepted_and_staged_under_the_new_task(app_client, owner_credentials, csrf_headers, temp_env):
     from ego_os import store
 
-    fake_model_complete.responses["delegation"] = ("designer", 5, 1, 0.00001)
-    fake_model_complete.responses["presentation_design"] = ("Working on it.", 10, 5, 0.00005)
-    fake_model_complete.responses["critique"] = ("PASS", 5, 1, 0.00001)
-
+    # Not processed here (that's test_smoke.py's job) -- this only checks
+    # that a valid upload is accepted and correctly staged under the new
+    # task's id, so the task stays 'queued' and that's fine.
     response = app_client.post(
         "/tasks",
         data={"request_text": "As Designer, note the attachment", "project_id": 1},
@@ -120,12 +119,8 @@ def test_valid_real_zip_is_accepted_and_staged_under_the_new_task(app_client, ow
     assert list(temp_env["uploads_dir"].glob("_staging-*")) == []
 
 
-def test_valid_real_pdf_is_accepted(app_client, owner_credentials, csrf_headers, fake_model_complete, temp_env):
+def test_valid_real_pdf_is_accepted(app_client, owner_credentials, csrf_headers, temp_env):
     from ego_os import store
-
-    fake_model_complete.responses["delegation"] = ("designer", 5, 1, 0.00001)
-    fake_model_complete.responses["presentation_design"] = ("Working on it.", 10, 5, 0.00005)
-    fake_model_complete.responses["critique"] = ("PASS", 5, 1, 0.00001)
 
     response = app_client.post(
         "/tasks",

@@ -22,11 +22,7 @@ def test_post_with_mismatched_origin_is_rejected(app_client, owner_credentials):
     assert response.status_code == 403
 
 
-def test_post_with_matching_origin_is_accepted(app_client, owner_credentials, csrf_headers, fake_model_complete):
-    fake_model_complete.responses["delegation"] = ("writer", 5, 1, 0.00001)
-    fake_model_complete.responses["business_communication"] = ("Done.", 10, 5, 0.00005)
-    fake_model_complete.responses["critique"] = ("PASS", 5, 1, 0.00001)
-
+def test_post_with_matching_origin_is_accepted(app_client, owner_credentials, csrf_headers):
     response = app_client.post(
         "/tasks",
         data={"request_text": "matching origin", "project_id": 1},
@@ -34,17 +30,15 @@ def test_post_with_matching_origin_is_accepted(app_client, owner_credentials, cs
         headers=csrf_headers,
     )
     # TestClient follows the 303 -> Location by default, landing on the
-    # delivered task page; a CSRF rejection would have stopped at 403 instead.
+    # (now-queued, v0.4.1) task page; a CSRF rejection would have stopped
+    # at 403 instead. The lifecycle itself isn't run in this test -- that's
+    # covered by test_smoke.py -- this only proves the CSRF check passed.
     assert response.status_code == 200
 
 
-def test_post_with_matching_referer_is_accepted_without_origin(app_client, owner_credentials, fake_model_complete):
+def test_post_with_matching_referer_is_accepted_without_origin(app_client, owner_credentials):
     """Some legitimate clients send Referer but not Origin -- the check
     falls back to Referer rather than requiring both."""
-    fake_model_complete.responses["delegation"] = ("writer", 5, 1, 0.00001)
-    fake_model_complete.responses["business_communication"] = ("Done.", 10, 5, 0.00005)
-    fake_model_complete.responses["critique"] = ("PASS", 5, 1, 0.00001)
-
     response = app_client.post(
         "/tasks",
         data={"request_text": "referer fallback", "project_id": 1},

@@ -19,18 +19,26 @@ def test_command_page_loads(app_client, owner_credentials):
     assert response.status_code == 200
 
 
-def test_full_task_lifecycle_with_mocked_model(app_client, owner_credentials, csrf_headers, fake_model_complete):
+def test_full_task_lifecycle_with_mocked_model(app_client, owner_credentials, csrf_headers, fake_model_complete, process_task):
     fake_model_complete.responses["delegation"] = ("writer", 5, 1, 0.00001)
     fake_model_complete.responses["business_communication"] = ("A short note for the Owner.", 20, 10, 0.0001)
     fake_model_complete.responses["critique"] = ("PASS", 5, 1, 0.00001)
 
+    # POST /tasks now only validates and enqueues (v0.4.1) -- it no longer
+    # blocks on the full lifecycle, so the redirect target is processed
+    # explicitly here rather than assumed complete on arrival.
     response = app_client.post(
         "/tasks",
         data={"request_text": "Write a short note", "project_id": 1},
         auth=owner_credentials,
         headers=csrf_headers,
-        follow_redirects=True,
+        follow_redirects=False,
     )
+    assert response.status_code == 303
+    task_id = int(response.headers["location"].rsplit("/", 1)[-1])
+    process_task(task_id)
+
+    response = app_client.get(response.headers["location"], auth=owner_credentials)
     assert response.status_code == 200
     assert "A short note for the Owner." in response.text
 

@@ -56,14 +56,32 @@ def app_client(temp_env, owner_credentials, monkeypatch):
     """A FastAPI TestClient against a fully isolated app instance. Does not
     set Basic Auth credentials on the client itself -- tests that need an
     authenticated request pass `auth=owner_credentials` explicitly, so
-    unauthenticated-access tests stay honest about what they're checking."""
+    unauthenticated-access tests stay honest about what they're checking.
+
+    The real background worker thread is disabled here (worker.start() is
+    a no-op) -- a real thread racing a test's assertions would make tests
+    flaky. Tests that need a submitted task actually processed call the
+    process_task fixture, which runs it synchronously and deterministically."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key-not-real")
+
+    from ego_os import worker
+    monkeypatch.setattr(worker, "start", lambda: None)
 
     from fastapi.testclient import TestClient
     from ego_os import main as main_module
 
     with TestClient(main_module.app) as client:
         yield client
+
+
+@pytest.fixture
+def process_task():
+    """Run one queued task's Task Lifecycle synchronously, in the test's
+    own thread -- the deterministic alternative to waiting on the (here,
+    disabled) background worker thread."""
+    from ego_os import worker
+
+    return worker.process_one
 
 
 @pytest.fixture

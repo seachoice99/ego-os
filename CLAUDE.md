@@ -4,9 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-Ego OS is currently a **specification-only repository** ("Genesis / Product architecture" phase per `README.md`). There is no application code, build system, package manifest, or test suite yet — the repo is a set of Markdown/YAML documents defining the product before any implementation begins. There are no build/lint/test commands to run.
+Ego OS is a working FastAPI + Jinja2 + SQLite application (`ego_os/`), live in production at `os.fiveseven.ru`, implementing the documented Task Lifecycle end to end against a real model provider (OpenRouter). It also still carries a documentation-first discipline: `product_bible/`, `architecture/`, and the ADRs remain the source of truth that implementation is built against, and a decision isn't durable until it's written down there — but there is real, running code, a real test suite, and real deployment history (`CHANGELOG.md`, `IMPLEMENTATION_ROADMAP.md`).
 
-When asked to "implement" something here, check first whether the task is actually about writing new spec documents (most likely) versus scaffolding real application code (a significant, distinct undertaking not yet started).
+When asked to "implement" something here, check first whether the task is about writing new spec documents (`architecture/`, ADRs) versus changing the runtime (`ego_os/`) — both are common; neither should be assumed.
+
+### Development / testing commands
+
+```
+pip install -r requirements-dev.txt   # requirements.txt alone is enough for production; adds pytest
+cp .env.example .env                  # fill in OPENROUTER_API_KEY, OWNER_USERNAME/PASSWORD, etc.
+uvicorn ego_os.main:app --reload      # run the app locally
+pytest                                # full test suite
+pytest tests/test_worker.py -v        # a single file
+```
+
+The test suite (`tests/`) never calls a real model/external API and never touches the real local `ego_os/ego_os.db`, `ego_os/uploads/`, or `ego_os/generated/` — every test runs against an isolated temp DB and temp directories (see `tests/conftest.py`), with `ego_os.model_provider.complete` replaced by a scripted fake. Every route requires Owner Basic Auth (`OWNER_USERNAME`/`OWNER_PASSWORD`) and, for state-changing requests, a matching `Origin`/`Referer` header — tests that need an authenticated request pass `auth=owner_credentials` and `headers=csrf_headers` explicitly.
 
 ## Core product concept
 
@@ -37,6 +49,11 @@ Logs should expose *operational* reasoning (what was done, why, what changed) �
 ## Repository layout
 
 ```text
+ego_os/              The application: FastAPI routes (main.py), Task Lifecycle (lifecycle.py), Tool
+                      Framework (tools.py), SQLite access (store.py), background worker (worker.py),
+                      Owner auth/CSRF (auth.py), model provider boundary (model_provider.py), templates/
+tests/                pytest suite — auth, CSRF, uploads/zip-safety, worker/task-states, execution
+                      events, migration safety; see CLAUDE.md's Development section for how to run it
 product_bible/      Product definition and principles (Russian) — vision, principles, user journey, MVP scope
 architecture/        Core architecture and lifecycle docs (English) — system architecture, entities, task lifecycle, reporting, cost accounting, employee model
 company/             Company description, employee registry, and employee YAML definitions

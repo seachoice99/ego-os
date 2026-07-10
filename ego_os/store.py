@@ -81,6 +81,25 @@ CREATE TABLE IF NOT EXISTS employee_proposals (
     cost REAL NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS execution_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id),
+    step TEXT NOT NULL,
+    employee_id TEXT,
+    employee_version TEXT,
+    capability TEXT,
+    model TEXT,
+    tool_name TEXT,
+    tool_args_summary TEXT,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cost REAL NOT NULL DEFAULT 0,
+    status TEXT,
+    detail TEXT,
+    duration_ms INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -92,9 +111,14 @@ def get_connection():
 
 
 def _ensure_column(conn, table, column, coldef):
+    """Returns True only when the column was actually just added, so a
+    caller can run one-time backfill logic exactly once, not on every
+    startup."""
     existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
     if column not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coldef}")
+        return True
+    return False
 
 
 def init_db():
@@ -108,6 +132,36 @@ def init_db():
         _ensure_column(conn, "employees", "permissions", "TEXT NOT NULL DEFAULT '[]'")
         # Migration for databases created before Document Generation (v0.2).
         _ensure_column(conn, "reports", "artifacts", "TEXT NOT NULL DEFAULT '[]'")
+
+        # Migration for databases created before the background worker
+        # (v0.4.1): run_state is the coarse worker-scheduling state
+        # (queued/running/completed/failed/cancelled), deliberately kept
+        # separate from the existing fine-grained `status` column
+        # (intake/planning/.../delivered/awaiting_approval/...) rather than
+        # repurposing it -- that vocabulary is already established and
+        # rendered throughout the templates.
+        run_state_added = _ensure_column(conn, "tasks", "run_state", "TEXT NOT NULL DEFAULT 'queued'")
+        _ensure_column(conn, "tasks", "error_message", "TEXT")
+        if run_state_added:
+            # Every pre-v0.4.1 task ran synchronously inside its own HTTP
+            # request and only ever left the DB once that request
+            # returned, so every existing row is already at a real
+            # terminal `status` -- never actually 'queued' or 'running'
+            # from the new worker's point of view. Without this, the
+            # ALTER TABLE ... DEFAULT 'queued' backfill would make the
+            # worker try to (re-)run the company's entire task history on
+            # first boot after upgrading.
+            conn.execute("UPDATE tasks SET run_state = 'completed' WHERE run_state = 'queued'")
+
+        # Migration for databases created before Employee version
+        # traceability (v0.4.1): which version of each employee actually
+        # performed the work, captured at execution time -- distinct from
+        # employees.version, which is mutated in place by every registry
+        # sync and so cannot answer "which version ran this" once an
+        # employee is later updated (ADR-0002: history must stay stable
+        # across upgrades).
+        _ensure_column(conn, "reports", "employee_versions", "TEXT NOT NULL DEFAULT '{}'")
+
         conn.commit()
     finally:
         conn.close()
@@ -198,15 +252,17 @@ def get_employee(id):
 
 
 def get_roster_summary(ids):
-    """Return id/title/mission/required_capabilities/permissions for the
-    given employee ids, with the JSON columns parsed back into lists -- the
-    shape Orchestrator needs to reason about who to staff, and the shape the
-    Tool Framework needs to know what a chosen specialist may access."""
+    """Return id/title/mission/required_capabilities/permissions/version
+    for the given employee ids, with the JSON columns parsed back into
+    lists -- the shape Orchestrator needs to reason about who to staff,
+    the shape the Tool Framework needs to know what a chosen specialist
+    may access, and (v0.4.1) the version so the lifecycle can record
+    which Employee Definition version actually performed the work."""
     conn = get_connection()
     try:
         placeholders = ",".join("?" for _ in ids)
         rows = conn.execute(
-            f"SELECT id, title, mission, required_capabilities, permissions FROM employees WHERE id IN ({placeholders})",
+            f"SELECT id, title, mission, required_capabilities, permissions, version FROM employees WHERE id IN ({placeholders})",
             ids,
         ).fetchall()
         return [
@@ -216,6 +272,7 @@ def get_roster_summary(ids):
                 "mission": r["mission"],
                 "required_capabilities": json.loads(r["required_capabilities"]),
                 "permissions": json.loads(r["permissions"]),
+                "version": r["version"],
             }
             for r in rows
         ]
@@ -254,6 +311,30 @@ def update_task_status(task_id, status):
         conn.close()
 
 
+def set_task_run_state(task_id, run_state, error_message=None):
+    """run_state is the coarse worker-scheduling state (queued/running/
+    completed/failed/cancelled) -- separate from the fine-grained
+    lifecycle-phase `status` column the worker also continues to update
+    via update_task_status."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE tasks SET run_state = ?, error_message = ? WHERE id = ?",
+            (run_state, error_message, task_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_tasks_by_run_state(run_state):
+    conn = get_connection()
+    try:
+        return conn.execute("SELECT * FROM tasks WHERE run_state = ?", (run_state,)).fetchall()
+    finally:
+        conn.close()
+
+
 def get_tasks():
     conn = get_connection()
     try:
@@ -277,12 +358,12 @@ def get_task(task_id):
         conn.close()
 
 
-def create_report(task_id, employees_involved, timeline, input_tokens, output_tokens, cost, result_text, qa_note, artifacts=None):
+def create_report(task_id, employees_involved, timeline, input_tokens, output_tokens, cost, result_text, qa_note, artifacts=None, employee_versions=None):
     conn = get_connection()
     try:
         conn.execute(
             "INSERT INTO reports (task_id, employees_involved, timeline, input_tokens, output_tokens, cost, "
-            "result_text, qa_note, artifacts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "result_text, qa_note, artifacts, employee_versions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id,
                 json.dumps(employees_involved),
@@ -293,6 +374,7 @@ def create_report(task_id, employees_involved, timeline, input_tokens, output_to
                 result_text,
                 qa_note,
                 json.dumps(artifacts or []),
+                json.dumps(employee_versions or {}),
             ),
         )
         conn.commit()
@@ -310,7 +392,44 @@ def get_report(task_id):
         report["employees_involved"] = json.loads(report["employees_involved"])
         report["timeline"] = json.loads(report["timeline"])
         report["artifacts"] = json.loads(report["artifacts"])
+        report["employee_versions"] = json.loads(report["employee_versions"])
         return report
+    finally:
+        conn.close()
+
+
+def log_execution_event(
+    task_id, step, employee_id=None, employee_version=None, capability=None, model=None,
+    tool_name=None, tool_args_summary=None, input_tokens=0, output_tokens=0, cost=0.0,
+    status=None, detail=None, duration_ms=None,
+):
+    """Written incrementally as the lifecycle proceeds (not just once at
+    the end, unlike reports.timeline) -- so a crash mid-task still leaves
+    a real, queryable operational record of what happened before it died.
+    Only operational facts (who, what step, what model/tool, cost,
+    outcome) -- never hidden chain-of-thought, per architecture/003."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO execution_events (task_id, step, employee_id, employee_version, capability, "
+            "model, tool_name, tool_args_summary, input_tokens, output_tokens, cost, status, detail, "
+            "duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_id, step, employee_id, employee_version, capability, model, tool_name,
+                tool_args_summary, input_tokens, output_tokens, cost, status, detail, duration_ms,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_execution_events(task_id):
+    conn = get_connection()
+    try:
+        return conn.execute(
+            "SELECT * FROM execution_events WHERE task_id = ? ORDER BY id", (task_id,)
+        ).fetchall()
     finally:
         conn.close()
 

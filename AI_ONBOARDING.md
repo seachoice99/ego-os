@@ -41,7 +41,7 @@ Treat these as settled unless a newer ADR explicitly reverses one:
 
 ## 5. How the Development Process Works
 
-This repository is currently documentation-first: philosophy and architecture are written down and agreed before any implementation begins. A decision only becomes durable once it is committed to a document — a conclusion reached only in conversation does not bind future work. Reversals of an accepted decision are recorded as a new ADR, not as a silent edit to the old one. Repository-level conventions (structure, file placement, language split) are maintained in `CLAUDE.md` — read it before creating or moving files.
+This repository is documentation-first, not documentation-only: `ego_os/` is a working, deployed application (see `CLAUDE.md` for how to run and test it), but architectural decisions are still written down and agreed in `architecture/`/ADRs before they're built, not decided ad hoc in code. A decision only becomes durable once it is committed to a document — a conclusion reached only in conversation does not bind future work. Reversals of an accepted decision are recorded as a new ADR, not as a silent edit to the old one. Repository-level conventions (structure, file placement, language split) are maintained in `CLAUDE.md` — read it before creating or moving files.
 
 ## 6. What Counts as Source of Truth
 

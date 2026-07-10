@@ -2,7 +2,32 @@
 
 All notable changes to Ego OS are recorded here, newest first. See `IMPLEMENTATION_ROADMAP.md` for the forward-looking plan this changelog reports against.
 
-## [Unreleased] — v0.4.0 — "Delivery Company"
+## [Unreleased] — v0.4.1 — "Trustworthy Delivery Company"
+
+### Added
+
+- **Owner access control** — every route requires HTTP Basic Auth (`OWNER_USERNAME`/`OWNER_PASSWORD`, fails closed if unconfigured), applied as a global FastAPI dependency (`ego_os/auth.py`). Published presentation sites under `/p/` are served directly by nginx, outside this app, and stay public on purpose.
+- **CSRF-equivalent protection** — an Origin/Referer host check on every state-changing request, chosen over a session/token scheme since Basic Auth has no session to carry a synchronizer token in.
+- **Safe file intake** — upload validation (extension allowlist + real magic-byte signature check + a streamed size cap, `MAX_UPLOAD_BYTES`) now happens *before* a task row is created, staged into a temp directory first, so a rejected upload leaves no orphaned task.
+- **ZIP/PDF hardening** — entry-count cap (`_MAX_ZIP_ENTRIES`) and a running-total-uncompressed-size cap (`_MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES`, checked while streaming bytes out of the archive, never trusting its declared size) against zip bombs; explicit rejection of any traversal/absolute-path zip entry; a PDF page-count cap (`_MAX_PDF_PAGES`); corrupted zip/PDF handled as a clean `ToolError` instead of crashing; any failure cleans up only this tool's own scratch directories.
+- **Background worker** (`ego_os/worker.py`) — an in-process `queue.Queue` + one thread, started at app startup. `POST /tasks` now only validates and enqueues; the Task Lifecycle itself runs on the worker instead of blocking the HTTP request.
+- **Task run states** — a new `tasks.run_state` column (`queued`/`running`/`completed`/`failed`/`cancelled`), kept separate from the existing fine-grained `status` column. `tasks.error_message` surfaces a worker failure to the Owner on the task page instead of losing it.
+- **Startup crash recovery** — a task left `running` from before a restart is marked `failed` with a clear reason; a task still `queued` (never actually started) is safely requeued.
+- **Execution events** (`execution_events` table, `store.log_execution_event`/`get_execution_events`) — written incrementally as the lifecycle proceeds, unlike `reports.timeline` (unchanged, still written once at the end for backward-compatible rendering). Each event: step, employee id/version, capability, model, tool name, a JSON-safe tool-args summary, tokens, cost, status, duration, timestamp.
+- **Employee version traceability** — `reports.employee_versions` records which version of each employee actually performed the work, captured at execution time; `store.get_roster_summary` now also returns `version`. A later YAML bump no longer silently changes what an already-delivered report says performed the work.
+- **Automated test suite** (`tests/`, pytest + FastAPI `TestClient`) — the project's first. Isolated temp DB/uploads/generated per test, `model_provider.complete` replaced by a scripted fake — no test calls a real API or touches the real local/production DB. Covers auth, CSRF, upload validation, zip-slip/zip-bomb/PDF-page-limit rejection with cleanup, task state transitions, worker crash recovery, idempotent processing, tool permission enforcement, QA PASS/REVISE, capability gap handling, project memory isolation, employee-version preservation, duplicate-report prevention, and the `run_state`/`employee_versions` schema migrations (against a throwaway pre-v0.4.1 database copy).
+- **Backup script** (`scripts/backup.sh`) — SQLite's own `.backup` plus a tarball of generated artifacts, with retention; proposed as a systemd timer in `DEPLOYMENT.md`, not yet installed on production.
+
+### Changed
+
+- `README.md`/`CLAUDE.md` no longer describe this as a specification-only repository; both document the real runtime, dev/test commands, and how the test suite is isolated. `DEPLOYMENT.md` documents the new runtime components (auth env vars, background worker, backup/restore) without any production server change having been made.
+- Task page (`task.html`) shows a "Processing"/"Failed" state with an auto-refresh meta tag while `run_state` is `queued`/`running`, since a task no longer completes synchronously by the time the post-submit redirect lands.
+
+### Fixed
+
+- A zip entry's traversal path (`../../evil.png`) was silently flattened to its basename and **accepted as a legitimate slide** by the prior zip-slip guard, instead of being rejected outright — found while writing this release's own regression test.
+
+## [v0.4.0] — "Delivery Company"
 
 ### Added
 

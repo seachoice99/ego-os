@@ -81,6 +81,29 @@ This is the primary implementation plan for Ego OS. It sequences work that is al
 
 ---
 
+## ✅ v0.4.1 — Trustworthy Delivery Company
+
+**Objective:** turn the working v0.4 MVP into a safe, observable, and recoverable platform before starting v0.5 and Digital Asset Awareness — the risks named going in: no Owner authentication, the full lifecycle running inline inside one HTTP request, no upload hardening, no durable execution log, no employee-version traceability on historical reports, effectively no automated tests, no backup automation, and documentation that no longer matched the real runtime.
+
+**Capabilities added:**
+
+- ✅ **Owner access control** — every route requires HTTP Basic Auth (`OWNER_USERNAME`/`OWNER_PASSWORD`, fails closed if unconfigured), plus an Origin/Referer-based CSRF-equivalent check on state-changing requests (chosen over a session/token scheme, since Basic Auth carries no session to hold a token in). Published presentation sites under `/p/` are served directly by nginx, outside this app, and stay public on purpose.
+- ✅ **Safe file intake** — upload validation (extension + real magic-byte signature + a streamed size cap) now happens before a task row is ever created, so a rejected upload leaves no orphaned/unexplained task. ZIP processing gets an entry-count cap and a running-total-uncompressed-size cap checked *while streaming bytes out* (never trusting the archive's own declared size), plus explicit rejection of any traversal/absolute-path entry — a regression test caught that the prior `Path.name`-based guard silently flattened `../../evil.png` into an accepted slide instead of rejecting it. PDF processing gets a page-count cap and corrupted-file handling. Any failure cleans up only the tool's own scratch directories.
+- ✅ **Reliable task execution** — `POST /tasks` now only validates and enqueues; the Task Lifecycle runs on an in-process background worker (`ego_os/worker.py`, a `queue.Queue` + one thread, no Redis/Celery/Docker) instead of holding the HTTP request open (this had already broken production once: nginx's `proxy_read_timeout` killed a real client connection on a task that took ~96s server-side). A new `tasks.run_state` column (`queued`/`running`/`completed`/`failed`/`cancelled`) tracks worker-scheduling state, deliberately kept separate from the existing fine-grained `status` column. A task interrupted by a restart is marked `failed` with a clear reason on the next boot instead of staying stuck at `running` forever; a `queued` task that never started is safely requeued. Processing is idempotent by construction — a task only ever runs while `run_state == 'queued'`, so the same task landing in the queue twice can never produce a duplicate report.
+- ✅ **Execution observability** — a new `execution_events` table is written incrementally as the lifecycle proceeds (unlike `reports.timeline`, still built the same way for backward-compatible rendering, which is only ever written once at the end) — so a crash mid-task now leaves a real, queryable operational record instead of losing everything. Each event carries the step, employee id/version, capability, model, tool name and a JSON-safe args summary, token usage, cost, status, and duration — operational facts only, never hidden chain-of-thought (`architecture/003`).
+- ✅ **Employee version traceability** — `reports.employee_versions` records which version of each employee actually performed the work, captured at execution time from `get_roster_summary`'s (now version-aware) roster data. A later YAML bump changes `employees.version` going forward without silently rewriting what an already-delivered report says performed the work (ADR-0002).
+- ✅ **Automated test suite** — first one this project has had. pytest + FastAPI's `TestClient`; every test runs against an isolated temp DB/uploads/generated directory and a scripted fake in place of `model_provider.complete` — no real API calls, no real DB touched. Covers auth/CSRF allow-deny, upload validation, zip-slip/zip-bomb/PDF-page-limit rejection with cleanup, task state transitions, worker crash recovery, idempotent processing, tool permission enforcement, QA PASS/REVISE, capability gap handling, project memory isolation, employee-version preservation across a registry bump, duplicate-report prevention, and the `run_state` migration itself (tested against a throwaway pre-v0.4.1 database copy, never the real local/production DB).
+- ✅ **Backup/restore** — `scripts/backup.sh` (SQLite's own `.backup`, never a raw `cp`, plus a tarball of generated artifacts, with retention) proposed as a systemd timer; not yet installed on production. Documented restore procedure in `DEPLOYMENT.md`.
+- ✅ **Documentation alignment** — `README.md` and `CLAUDE.md` no longer describe this as a specification-only repository; both document the real runtime and how to run/test it. `DEPLOYMENT.md` documents the new runtime components (auth env vars, background worker, backup) without any production server change having actually been made yet.
+
+**Exit criteria:** an unauthorized request cannot read or change anything; a hostile/oversized upload is rejected predictably with no orphaned task; `POST /tasks` returns fast while the lifecycle runs in the background; a worker failure is visible as `failed`, not lost; a restart does not leave a task stuck `running` forever; reprocessing never duplicates a report; a report records the real employee version that did the work; the core lifecycle is covered by isolated, mocked tests — all met, verified both by the automated suite and live against a running server (including a real simulated crash/restart and a real malicious zip).
+
+**Dependencies:** v0.4.
+
+**Deferred:** off-box backup replication (still single-VPS); a hard wall-clock timeout on task processing (the size/page/entry caps bound worst-case work indirectly; the worker's `run_state`/duration tracking is the natural place to add this later); rate-limiting on Basic Auth attempts; consolidating `reports.timeline` and `execution_events` into one representation (kept both, deliberately, to avoid any risk to already-working template rendering).
+
+---
+
 ## 🔜 v0.5 — Self-Managing Company
 
 **Objective:** the company recognizes and manages its own valuable output, and can test monetization under bounded oversight.
@@ -92,7 +115,7 @@ This is the primary implementation plan for Ego OS. It sequences work that is al
 
 **Exit criteria:** at least one Digital Asset is tracked independent of the task that produced it; Controlled Monetization exit criteria are defined only once a real candidate asset exists, not scoped against a hypothetical now.
 
-**Dependencies:** v0.4.
+**Dependencies:** v0.4.1.
 
 **Deferred:** monetization scaling and retirement steps of the Digital Asset Lifecycle; everything past Stage 3.
 

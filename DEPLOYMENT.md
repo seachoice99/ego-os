@@ -96,7 +96,9 @@ Certificate: `/etc/letsencrypt/live/os.fiveseven.ru/` (managed entirely by certb
 
 ## Backups
 
-The only state that matters is the SQLite database at `/opt/ego-os/ego_os/ego_os.db` and any generated documents under `/opt/ego-os/ego_os/generated/`. Everything else (`.env` aside) is reproducible from git. There is no automated backup job yet — for now, back up manually when needed:
+The only state that matters is the SQLite database at `/opt/ego-os/ego_os/ego_os.db` and any generated documents under `/opt/ego-os/ego_os/generated/`. Everything else (`.env` aside) is reproducible from git.
+
+**Manual backup** (unchanged, always available):
 
 ```
 ssh root@150.251.138.149 "sqlite3 /opt/ego-os/ego_os/ego_os.db '.backup /tmp/ego_os_backup.db'"
@@ -105,9 +107,58 @@ scp root@150.251.138.149:/tmp/ego_os_backup.db ./ego_os_backup_$(date +%Y%m%d).d
 
 (Using SQLite's own `.backup` rather than `cp` avoids copying a database mid-write.)
 
+**Automated backup (proposed, v0.4.1 — not yet installed on production):** `scripts/backup.sh` wraps the same `.backup` mechanism plus a tarball of `ego_os/generated/`, writing timestamped files to a backup directory and pruning anything older than `EGO_OS_BACKUP_RETENTION_DAYS` (default 14). Verified locally (tar + retention logic) against a throwaway test database; the `sqlite3 .backup` call itself uses the exact command already used above, but hasn't been re-run end-to-end on this exact script on a machine with the `sqlite3` CLI installed (not present on the Windows dev box this was written on) — smoke-test it once on the VPS before scheduling.
+
+To install as a daily systemd timer (not applied automatically — this is a proposal for the Owner to apply):
+
+```ini
+# /etc/systemd/system/ego-os-backup.service
+[Unit]
+Description=Ego OS backup
+
+[Service]
+Type=oneshot
+User=egoos
+Environment=EGO_OS_BACKUP_DIR=/opt/ego-os-backups
+ExecStart=/opt/ego-os/scripts/backup.sh
+```
+
+```ini
+# /etc/systemd/system/ego-os-backup.timer
+[Unit]
+Description=Daily Ego OS backup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Then `mkdir -p /opt/ego-os-backups && chown egoos:egoos /opt/ego-os-backups`, `systemctl daemon-reload && systemctl enable --now ego-os-backup.timer`. `/opt/ego-os-backups` is deliberately outside `/opt/ego-os` so a mistake in the app's own directory (e.g. a bad `git clean`) can't also destroy the backups. This is still a single-VPS backup — a full disk/VPS loss would take the backups with it; off-box replication (e.g. periodic `scp` to another host) is a real known gap, not solved here.
+
+**Restore procedure:**
+
+```
+systemctl stop ego-os
+cp /opt/ego-os-backups/ego_os_<timestamp>.db /opt/ego-os/ego_os/ego_os.db
+tar -xzf /opt/ego-os-backups/generated_<timestamp>.tar.gz -C /opt/ego-os/ego_os/
+chown -R egoos:egoos /opt/ego-os/ego_os/ego_os.db /opt/ego-os/ego_os/generated
+systemctl start ego-os
+systemctl status ego-os --no-pager
+```
+
+Verify afterward: `curl -s -o /dev/null -w '%{http_code}\n' -u <owner>:<password> https://os.fiveseven.ru/dashboard` should return 200, and the dashboard's task list/cost should match the restored backup's point in time, not whatever was live before the restore.
+
 ## Production `.env`
 
-Location: `/opt/ego-os/.env` on the server only, mode `600`, owned by `egoos`. Contains `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL`, `TAVILY_API_KEY`, `PRESENTATIONS_DIR`. This file is not in git (`.gitignore`'d) and must never be committed or pasted into chat/tooling — if a key ever needs to change, edit this file directly over SSH.
+Location: `/opt/ego-os/.env` on the server only, mode `600`, owned by `egoos`. Contains `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL`, `TAVILY_API_KEY`, `PRESENTATIONS_DIR`, and (v0.4.1) `OWNER_USERNAME`/`OWNER_PASSWORD` — the app now fails closed (every request gets 401) if either of the last two is unset, so this deploy step is no longer optional. This file is not in git (`.gitignore`'d) and must never be committed or pasted into chat/tooling — if a key or the Owner password ever needs to change, edit this file directly over SSH.
+
+## Runtime components (v0.4.1)
+
+- **Owner authentication** — HTTP Basic Auth (`OWNER_USERNAME`/`OWNER_PASSWORD`) is now required on every route in this app. The published presentation sites under `/p/<site_name>/` are served directly by nginx, outside this app entirely, and are unaffected — they stay public. Any external monitoring/health-check hitting a route inside the app (not `/p/`) needs these credentials from now on.
+- **Background worker** — `POST /tasks` now only validates and enqueues; the actual Task Lifecycle runs on an in-process background thread started at app startup (`ego_os/worker.py`). No new service, no new port, no Redis/Celery — it lives inside the same `ego-os.service` process and needs no separate deployment step. A task interrupted by a restart (`systemctl restart ego-os` mid-task) is marked `failed` with a clear reason on the next boot rather than staying stuck.
 
 ## Presentation Website publishing (v0.4)
 
