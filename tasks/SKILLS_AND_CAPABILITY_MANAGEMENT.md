@@ -4,7 +4,7 @@
 
 - ID: SCM
 - Project: ego-os
-- Status: blocked pending Owner architecture approval and completion/prioritization of current v0.5 work
+- Status: Phase 1 architecture accepted; implementation remains blocked pending completion/prioritization of current v0.5 work
 - Priority: P2 overall; Phase 1 becomes P1 only when scheduled
 - Created: 2026-07-10
 - Owner employee: orchestrator
@@ -18,9 +18,9 @@ Separate reusable Skills from Employee definitions, create a controlled local Re
 
 | ID | Phase | Priority | Task | Dependencies | Affected components | Acceptance and completion criteria | Risks | Required approval | Documents to update |
 |---|---:|---:|---|---|---|---|---|---|---|
-| SCM-01 | 1 | P1 | Define Employee, Persona, Knowledge, Skill, Tool, and Policy schemas and boundaries | ADR-0004 accepted | architecture, Employee model | Reviewed schemas make ownership and authority unambiguous | overlapping entities | Owner + architecture | architecture/001, 005, 008 |
-| SCM-02 | 1 | P1 | Specify Skill manifest, versioning, dependencies, provenance, trust, and lifecycle | SCM-01; ADR-0005 accepted | manifest, policy | Schema examples validate; compatibility and rollback semantics documented | nondeterminism, license gaps | Owner + security + architecture | architecture/008 |
-| SCM-03 | 1 | P1 | Define provider-neutral composition and adapter contract | SCM-01, SCM-02 | runtime, model providers | Contract supports at least two hypothetical adapters without vendor fields in domain entities | provider lock-in | Architecture | architecture/000, 008 |
+| SCM-01 | 1 | P1 | Define Employee, Persona, Knowledge, Skill, Tool, and Policy schemas and boundaries | ADR-0004 accepted | architecture, Employee model | Documentation complete and accepted on 2026-07-10 in `architecture/010_CAPABILITY_DOMAIN_MODEL.md` | overlapping entities | Approved: Owner | architecture/001, 005, 008, 010 |
+| SCM-02 | 1 | P1 | Specify Skill manifest, versioning, dependencies, provenance, trust, and lifecycle | SCM-01; ADR-0005 accepted | manifest, policy | Documentation complete and accepted on 2026-07-10 in `architecture/011_SKILL_MANIFEST_SPECIFICATION.md`; remaining operational details belong to Registry design | nondeterminism, license gaps | Approved: Owner; security review still required for implementation | architecture/008, 011 |
+| SCM-03 | 1 | P1 | Define provider-neutral composition and adapter contract | SCM-01, SCM-02 | runtime, model providers | Contract accepted on 2026-07-10 in `architecture/012_EMPLOYEE_SKILL_COMPOSITION_CONTRACT.md`; two-adapter fixture proof is an implementation acceptance test | provider lock-in | Approved: Owner | architecture/000, 008, 012 |
 | SCM-04 | 2 | P1 | Design Registry storage, metadata, search, audit, compatibility, update, disable, revoke, and rollback | SCM-02, SCM-03 | Registry, store, audit | Threat model and storage design approved; deterministic resolution specified | corruption, audit leakage | Owner + security + architecture | architecture/008; roadmap |
 | SCM-05 | 2 | P1 | Implement and test minimal local Skill Registry | SCM-04; separate implementation assignment | ego_os, tests | Unit/integration tests pass; no external execution; rollback demonstrated | migration and integrity bugs | Owner | implementation docs, changelog |
 | SCM-06 | 2 | P1 | Implement Employee attachment and compatibility resolution | SCM-05 | employees, lifecycle, registry | Attach/detach/version lock tested without changing historical task attribution | behavior regression | Architecture | employee architecture, tests |
@@ -45,6 +45,8 @@ Separate reusable Skills from Employee definitions, create a controlled local Re
 - Phases 4–5 are later releases.
 - Phase 6 is premature until governance and operational evidence exist.
 - SCM-01, SCM-02, SCM-04, SCM-10, and SCM-11 are prerequisites for safe autonomous capability development.
+
+Phase 1 audit evidence and first extraction candidates are recorded in `tasks/SCM_PHASE1_AUDIT.md`.
 
 ## Global completion rule
 

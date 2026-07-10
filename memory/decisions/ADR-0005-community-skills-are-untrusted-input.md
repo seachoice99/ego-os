@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — requires Owner approval.
+Accepted by Owner on 2026-07-10.
 
 ## Context
 
