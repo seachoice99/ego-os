@@ -1,0 +1,20 @@
+{
+  "id": "EXAMPLE-001",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Replace with a concrete outcome",
+  "prompt": "Explain exactly what Claude must implement and what is out of scope.",
+  "acceptance": [
+    "Add an objective, machine-verifiable acceptance criterion."
+  ],
+  "allowed_paths": [
+    "path/expected/to/change"
+  ],
+  "forbidden_paths": [
+    "memory/decisions/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "automatic",
+  "result": null
+}
