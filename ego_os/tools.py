@@ -217,6 +217,13 @@ _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{3}$|^#[0-9a-fA-F]{6}$")
 _SLIDE_IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
 _DEFAULT_ACCENT = "#3b82f6"
 
+# Zip bomb / oversized-deck protection (v0.4.1): bounds are generous for a
+# real slide deck but reject a deliberately hostile or absurd upload before
+# it can exhaust disk/memory/CPU.
+_MAX_ZIP_ENTRIES = 2000
+_MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = 500 * 1024 * 1024
+_MAX_PDF_PAGES = 200
+
 _YOUTUBE_RE = re.compile(
     r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/shorts/)([\w-]{6,})"
 )
@@ -492,39 +499,95 @@ def _build_presentation_site(site_name: str, captions, task_id: int, accent: str
         )
 
     source_dir = GENERATED_DIR / str(task_id) / "source"
+    site_dir = GENERATED_DIR / str(task_id) / "site"
     source_dir.mkdir(parents=True, exist_ok=True)
     source_dir_resolved = source_dir.resolve()
     source_file = sources[0]
     links_by_page = {}
 
-    if source_file.suffix.lower() == ".zip":
-        with zipfile.ZipFile(source_file) as zf:
-            for member in zf.namelist():
-                if Path(member).suffix.lower() not in _SLIDE_IMAGE_EXTS:
-                    continue
-                member_path = (source_dir / Path(member).name).resolve()
-                if not member_path.is_relative_to(source_dir_resolved):
-                    continue  # zip-slip guard: never extract outside source_dir
-                with zf.open(member) as src, open(member_path, "wb") as dst:
-                    shutil.copyfileobj(src, dst)
-    else:
-        # .pdf: render each page to a PNG at 2x scale (~144 DPI) -- plenty
-        # of source resolution for the later resize-to-1600px-wide step,
-        # without the huge intermediate files a higher zoom would produce.
-        # Real link annotations (URL, video, etc.) are recovered here too,
-        # while page/rect dimensions are still available.
-        with fitz.open(source_file) as pdf:
-            links_by_page = _extract_pdf_links(pdf)
-            zoom = fitz.Matrix(2, 2)
-            for page_index, page in enumerate(pdf, start=1):
-                pixmap = page.get_pixmap(matrix=zoom)
-                pixmap.save(source_dir / f"pdfpage{page_index:03d}.png")
+    # Everything from here through publish is wrapped so a rejected/corrupt
+    # upload or an over-limit deck never leaves a half-extracted source/site
+    # directory behind -- only this tool's own scratch dirs are cleaned up,
+    # never a sibling artifact (e.g. a document already created for the
+    # same task by a different tool call).
+    try:
+        if source_file.suffix.lower() == ".zip":
+            try:
+                zf = zipfile.ZipFile(source_file)
+            except zipfile.BadZipFile as exc:
+                raise ToolError(f"uploaded .zip is corrupted or not a real zip archive: {exc}")
+            try:
+                infos = zf.infolist()
+                if len(infos) > _MAX_ZIP_ENTRIES:
+                    raise ToolError(f"uploaded .zip has too many entries (max {_MAX_ZIP_ENTRIES})")
 
-    images = sorted(p for p in source_dir.iterdir() if p.suffix.lower() in _SLIDE_IMAGE_EXTS)
-    if not images:
-        raise ToolError("uploaded slide deck contained no usable slides")
+                total_written = 0
+                for info in infos:
+                    entry_path = Path(info.filename)
+                    # Reject a traversal/absolute-path entry outright rather
+                    # than silently flattening it to its basename via
+                    # Path.name -- that would have quietly accepted
+                    # "../../../evil.png" as if it were a legitimate slide
+                    # instead of treating it as the suspicious entry it is
+                    # (found while writing this exact regression test).
+                    if entry_path.is_absolute() or ".." in entry_path.parts:
+                        continue
+                    if entry_path.suffix.lower() not in _SLIDE_IMAGE_EXTS:
+                        continue
+                    member_path = (source_dir / entry_path.name).resolve()
+                    if not member_path.is_relative_to(source_dir_resolved):
+                        continue  # zip-slip guard: never extract outside source_dir (defense in depth)
+                    # Never trust the zip's own declared file_size alone --
+                    # cap while actually streaming bytes out, in case the
+                    # archive's metadata understates it (a classic zip-bomb
+                    # shape: a tiny compressed size, a huge real payload).
+                    with zf.open(info) as src, open(member_path, "wb") as dst:
+                        while True:
+                            chunk = src.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            total_written += len(chunk)
+                            if total_written > _MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES:
+                                raise ToolError(
+                                    "uploaded .zip decompressed past the "
+                                    f"{_MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES // (1024 * 1024)}MB total "
+                                    "limit -- rejected as a likely zip bomb"
+                                )
+                            dst.write(chunk)
+            finally:
+                zf.close()
+        else:
+            # .pdf: render each page to a PNG at 2x scale (~144 DPI) -- plenty
+            # of source resolution for the later resize-to-1600px-wide step,
+            # without the huge intermediate files a higher zoom would produce.
+            # Real link annotations (URL, video, etc.) are recovered here too,
+            # while page/rect dimensions are still available.
+            try:
+                pdf = fitz.open(source_file)
+            except Exception as exc:
+                raise ToolError(f"uploaded .pdf is corrupted or not a real PDF: {exc}")
+            try:
+                if pdf.page_count > _MAX_PDF_PAGES:
+                    raise ToolError(
+                        f"uploaded .pdf has {pdf.page_count} pages, more than the "
+                        f"{_MAX_PDF_PAGES}-page limit"
+                    )
+                links_by_page = _extract_pdf_links(pdf)
+                zoom = fitz.Matrix(2, 2)
+                for page_index, page in enumerate(pdf, start=1):
+                    pixmap = page.get_pixmap(matrix=zoom)
+                    pixmap.save(source_dir / f"pdfpage{page_index:03d}.png")
+            finally:
+                pdf.close()
 
-    site_dir = GENERATED_DIR / str(task_id) / "site"
+        images = sorted(p for p in source_dir.iterdir() if p.suffix.lower() in _SLIDE_IMAGE_EXTS)
+        if not images:
+            raise ToolError("uploaded slide deck contained no usable slides")
+    except Exception:
+        shutil.rmtree(source_dir, ignore_errors=True)
+        shutil.rmtree(site_dir, ignore_errors=True)
+        raise
+
     img_dir = site_dir / "img"
     img_dir.mkdir(parents=True, exist_ok=True)
 

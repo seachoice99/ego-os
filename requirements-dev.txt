@@ -1,0 +1,4 @@
+# Dev/test-only dependencies -- never needed in production, kept separate
+# from requirements.txt so a production install stays minimal.
+-r requirements.txt
+pytest

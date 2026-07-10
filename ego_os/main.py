@@ -1,21 +1,79 @@
 import json
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Optional
 
 import markdown as md
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 load_dotenv()
 
 from ego_os import employees, lifecycle, store, tools  # noqa: E402
+from ego_os.auth import require_owner, verify_csrf  # noqa: E402
 
-app = FastAPI(title="Ego OS")
+app = FastAPI(title="Ego OS", dependencies=[Depends(require_owner), Depends(verify_csrf)])
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+# Safe file intake (v0.4.1). Matches nginx's client_max_body_size on
+# production, but enforced here too since the app must not rely solely on
+# an infra-level limit that doesn't apply to local/dev runs.
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+_UPLOAD_MAGIC = {
+    ".zip": (b"PK\x03\x04", b"PK\x05\x06"),  # PK\x05\x06 is a valid empty archive
+    ".pdf": (b"%PDF-",),
+}
+
+
+def _validate_and_stage_attachment(attachment: UploadFile) -> Path:
+    """Validate extension, real file-type signature, and size *before* the
+    task exists at all -- an invalid upload must reject cleanly with no
+    task ever created, not leave an inconsistent row with no explanation
+    (found live: the task used to be created first, so a rejected
+    attachment left it stuck at 'intake' forever). Streams and checks in
+    chunks rather than trusting Content-Length, and stages into a temp
+    directory so nothing lands under the real per-task upload path until
+    validation has fully passed."""
+    filename = Path(attachment.filename).name
+    ext = Path(filename).suffix.lower()
+    if not filename or ext not in _UPLOAD_MAGIC:
+        raise HTTPException(status_code=400, detail="attachment must be a .zip of slide images or a .pdf deck")
+
+    tools.UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    staging_dir = Path(tempfile.mkdtemp(dir=tools.UPLOADS_DIR, prefix="_staging-"))
+    target = staging_dir / filename
+    written = 0
+    magic_ok = False
+    try:
+        with target.open("wb") as f:
+            while True:
+                chunk = attachment.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                if not magic_ok:
+                    if not chunk.startswith(_UPLOAD_MAGIC[ext]):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"attachment does not look like a real {ext} file",
+                        )
+                    magic_ok = True
+                written += len(chunk)
+                if written > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"attachment exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)}MB limit",
+                    )
+                f.write(chunk)
+        if written == 0:
+            raise HTTPException(status_code=400, detail="attachment is empty")
+    except HTTPException:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
+    return target
 
 
 def _render_text_artifact(result_text: str) -> dict:
@@ -156,15 +214,18 @@ def submit_task(
     can find it by task_id."""
     if store.get_project(project_id) is None:
         project_id = store.ensure_default_project()
-    task_id = store.create_task(request_text, project_id)
+
+    staged_attachment = None
     if attachment is not None and attachment.filename:
-        if not attachment.filename.lower().endswith((".zip", ".pdf")):
-            raise HTTPException(status_code=400, detail="attachment must be a .zip of slide images or a .pdf deck")
-        upload_dir = tools.UPLOADS_DIR / str(task_id)
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        target = upload_dir / Path(attachment.filename).name
-        with target.open("wb") as f:
-            shutil.copyfileobj(attachment.file, f)
+        staged_attachment = _validate_and_stage_attachment(attachment)
+
+    task_id = store.create_task(request_text, project_id)
+    if staged_attachment is not None:
+        final_dir = tools.UPLOADS_DIR / str(task_id)
+        final_dir.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(staged_attachment), str(final_dir / staged_attachment.name))
+        shutil.rmtree(staged_attachment.parent, ignore_errors=True)
+
     lifecycle.run(task_id, project_id, request_text)
     return RedirectResponse(url=f"/tasks/{task_id}", status_code=303)
 
