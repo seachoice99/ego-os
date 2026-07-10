@@ -2,6 +2,13 @@
 
 All notable changes to Ego OS are recorded here, newest first. See `IMPLEMENTATION_ROADMAP.md` for the forward-looking plan this changelog reports against.
 
+## [Unreleased] — Skills Registry (SR-01)
+
+### Added
+
+- **Skill Registry foundation** (`ego_os/skills.py`, `skills/registry/`) — filesystem-based, no new database, no new runtime dependency. Reads and validates Skill manifests per `architecture/011_SKILL_MANIFEST_SPECIFICATION.md`: required-field presence, lower_snake_case id, Semantic Version (`MAJOR.MINOR.PATCH`, a small hand-rolled subset rather than a third-party semver library), `trust.state`/`lifecycle.state` enum validation, entrypoint path-traversal/absolute-path rejection, and a real SHA-256 digest check against the entrypoint file's actual content (not just field presence). Deterministic listing, exact-version lookup, and compatible-version-range resolution (`>=`/`<=`/`==`/`>`/`<`, comma-separated). Fails closed (a clean, typed error — never a stack trace) for any revoked version, even one an exact lookup would otherwise resolve. The Registry only reads and validates — it never executes Skill content and never grants a permission; Skill `requirements` remain requirements, not grants.
+- 32 new tests (75 total with the existing v0.4.1 suite): valid manifest, malformed YAML, missing field, invalid id, invalid version, digest mismatch (both a bad-format field and a real content/digest mismatch), path traversal, missing entrypoint file, duplicate id+version across the tree, a manifest whose identity disagrees with its own storage location, revoked-skill fail-closed (exact and range lookup), deterministic listing, listing surviving one bad manifest without breaking the rest, exact/compatible/incompatible version resolution.
+
 ## [Unreleased] — v0.4.1 — "Trustworthy Delivery Company"
 
 ### Added

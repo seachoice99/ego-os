@@ -131,6 +131,8 @@ This is the primary implementation plan for Ego OS. It sequences work that is al
 
 **Dependencies:** accepted ADR-0004 and ADR-0005. Full task sequence and approval gates: `tasks/SKILLS_AND_CAPABILITY_MANAGEMENT.md`. Architecture: `architecture/008_SKILLS_AND_CAPABILITY_MANAGEMENT.md`.
 
+**Implementation progress (SR-01..SR-04, tracked in `tasks/queue/SR-0*.yaml`):** SR-01 (filesystem-based Registry foundation, `ego_os/skills.py`) delivered — no new database, no new runtime dependency, manifest validation (id/version/trust/lifecycle/entrypoint digest/path-traversal/duplicate-identity), deterministic listing, exact and compatible-range version resolution, fail-closed on revoked. Registry only reads/validates; it does not execute Skill content or grant permissions.
+
 ---
 
 ## ⏳ v1.0 — Autonomous Digital Company
