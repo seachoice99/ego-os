@@ -107,4 +107,8 @@ scp root@150.251.138.149:/tmp/ego_os_backup.db ./ego_os_backup_$(date +%Y%m%d).d
 
 ## Production `.env`
 
-Location: `/opt/ego-os/.env` on the server only, mode `600`, owned by `egoos`. Contains `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL`, `TAVILY_API_KEY`. This file is not in git (`.gitignore`'d) and must never be committed or pasted into chat/tooling — if a key ever needs to change, edit this file directly over SSH.
+Location: `/opt/ego-os/.env` on the server only, mode `600`, owned by `egoos`. Contains `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL`, `TAVILY_API_KEY`, `PRESENTATIONS_DIR`. This file is not in git (`.gitignore`'d) and must never be committed or pasted into chat/tooling — if a key ever needs to change, edit this file directly over SSH.
+
+## Presentation Website publishing (v0.4)
+
+The `build_presentation_site` tool publishes static sites to the directory named by the `PRESENTATIONS_DIR` env var (defaults to a local `ego_os/generated/_presentations/` for dev). In production this is set to `/var/www/ego-presentations`, owned by `egoos:www-data` with group read/execute so nginx can serve it, and exposed at `https://os.fiveseven.ru/p/<site_name>/` via one added `location /p/` block in the existing `/etc/nginx/sites-available/os.fiveseven.ru` (an `alias` to that directory, `autoindex off`) — no new DNS record, certificate, or nginx site was needed since it reuses the already-issued `os.fiveseven.ru` certificate.

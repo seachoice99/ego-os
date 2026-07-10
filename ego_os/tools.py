@@ -10,7 +10,11 @@ Adding a new tool later (web search, document generation, spreadsheet
 editing) means adding an entry to TOOLS, not changing this framework.
 """
 
+import html
 import os
+import re
+import shutil
+import zipfile
 from pathlib import Path
 
 import httpx
@@ -18,9 +22,14 @@ from docx import Document
 from fpdf import FPDF
 from openpyxl import Workbook
 from openpyxl.styles import Font
+from PIL import Image
 
 REPO_ROOT = Path(__file__).parent.parent.resolve()
 GENERATED_DIR = Path(__file__).parent / "generated"
+UPLOADS_DIR = Path(__file__).parent / "uploads"
+PRESENTATIONS_DIR = Path(
+    os.environ.get("PRESENTATIONS_DIR", str(Path(__file__).parent / "generated" / "_presentations"))
+)
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 _DOCUMENT_FORMATS = {".md", ".docx", ".pdf"}
 
@@ -202,6 +211,186 @@ def _create_spreadsheet(filename: str, data, task_id: int) -> str:
     return f"created spreadsheet artifact '{filename}' with {len(data)} rows, downloadable from the task's report."
 
 
+_SITE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,48}$")
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{3}$|^#[0-9a-fA-F]{6}$")
+_SLIDE_IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
+_DEFAULT_ACCENT = "#3b82f6"
+
+_PRESENTATION_HTML = """<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>:root {{ --accent: {accent}; }}</style>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="viewer-shell">
+  <aside class="thumb-panel">
+{thumbs}
+  </aside>
+  <div class="main-viewer">
+    <div class="deck" id="deck">
+{slides}
+    </div>
+    <div class="deck-counter"><span id="deck-current">1</span> / {count}</div>
+  </div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>
+"""
+
+_PRESENTATION_CSS = """* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: #0b0d12; color: #e8e8ec; font-family: system-ui, sans-serif; }
+.viewer-shell { display: flex; height: 100vh; }
+.thumb-panel { width: 110px; flex-shrink: 0; overflow-y: auto; background: #111319; border-right: 1px solid #22262f; padding: 0.6rem 0.4rem; }
+.thumb { display: block; width: 100%; background: none; border: 2px solid transparent; border-radius: 6px; padding: 0; margin-bottom: 0.5rem; cursor: pointer; position: relative; overflow: hidden; }
+.thumb img { width: 100%; display: block; opacity: 0.55; transition: opacity 0.15s; }
+.thumb span { position: absolute; bottom: 2px; right: 4px; font-size: 0.65rem; background: rgba(0,0,0,0.6); padding: 0 3px; border-radius: 3px; }
+.thumb:hover img, .thumb.active img { opacity: 1; }
+.thumb.active { border-color: var(--accent); }
+.main-viewer { flex: 1; overflow-y: scroll; scroll-snap-type: y proximity; position: relative; }
+.slide-frame { scroll-snap-align: start; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
+.slide { max-width: 100%; text-align: center; }
+.slide img { max-width: 100%; max-height: 92vh; display: block; margin: 0 auto; border-radius: 4px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+.slide-caption { color: #aab; margin-top: 0.8rem; font-size: 0.95rem; }
+.deck-counter { position: fixed; right: 1rem; bottom: 1rem; background: rgba(0,0,0,0.55); color: var(--accent); padding: 0.3rem 0.7rem; border-radius: 999px; font-size: 0.85rem; font-weight: 600; }
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 4px; }
+"""
+
+_PRESENTATION_JS = """(function () {
+  var counter = document.getElementById('deck-current');
+  var thumbs = Array.prototype.slice.call(document.querySelectorAll('.thumb'));
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide-frame'));
+
+  thumbs.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var target = document.getElementById(btn.getAttribute('data-target'));
+      if (target) target.scrollIntoView({ behavior: 'smooth' });
+    });
+  });
+
+  if ('IntersectionObserver' in window) {
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          var index = slides.indexOf(entry.target) + 1;
+          counter.textContent = index;
+          thumbs.forEach(function (t) { t.classList.remove('active'); });
+          if (thumbs[index - 1]) thumbs[index - 1].classList.add('active');
+        }
+      });
+    }, { threshold: 0.6 });
+    slides.forEach(function (s) { observer.observe(s); });
+  }
+})();
+"""
+
+
+def _build_presentation_site(site_name: str, captions, task_id: int, accent: str = None) -> str:
+    """Build and publish a real, browsable presentation website from the
+    slide images in this task's uploaded .zip archive (architecture/007's
+    MVP slice: dark theme, vertical scroll, thumbnail nav, deck counter --
+    video hotspots/portfolio grid/PDF export deliberately deferred).
+
+    Deliberately one deterministic tool call rather than a multi-step
+    agent loop: the image resize / HTML generation / publish steps are
+    ordinary code, not something that needs an LLM choreographing several
+    tool calls per turn, so the existing one-tool-call-per-turn execution
+    model (ego_os/lifecycle.py) did not need to change to support this."""
+    if not _SITE_SLUG_RE.match(site_name or ""):
+        raise ToolError("site_name must be lowercase letters, digits, and hyphens only (2-49 chars)")
+    if not isinstance(captions, list) or not all(isinstance(c, str) for c in captions):
+        raise ToolError(
+            'captions must be a JSON array of strings, one per slide in file order '
+            '(use "" for none), e.g. ["Cover", "Agenda", ""]'
+        )
+    accent = accent or _DEFAULT_ACCENT
+    if not _HEX_COLOR_RE.match(accent):
+        raise ToolError("accent must be a hex color like #3b82f6")
+
+    task_uploads = UPLOADS_DIR / str(task_id)
+    archives = sorted(task_uploads.glob("*.zip")) if task_uploads.is_dir() else []
+    if not archives:
+        raise ToolError(
+            "no uploaded slide archive found for this task -- the Owner must attach a .zip of "
+            "slide images (.png/.jpg/.jpeg) when submitting the task"
+        )
+
+    source_dir = GENERATED_DIR / str(task_id) / "source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    source_dir_resolved = source_dir.resolve()
+    with zipfile.ZipFile(archives[0]) as zf:
+        for member in zf.namelist():
+            if Path(member).suffix.lower() not in _SLIDE_IMAGE_EXTS:
+                continue
+            member_path = (source_dir / Path(member).name).resolve()
+            if not member_path.is_relative_to(source_dir_resolved):
+                continue  # zip-slip guard: never extract outside source_dir
+            with zf.open(member) as src, open(member_path, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+
+    images = sorted(p for p in source_dir.iterdir() if p.suffix.lower() in _SLIDE_IMAGE_EXTS)
+    if not images:
+        raise ToolError("uploaded archive contained no .png/.jpg/.jpeg images")
+
+    site_dir = GENERATED_DIR / str(task_id) / "site"
+    img_dir = site_dir / "img"
+    img_dir.mkdir(parents=True, exist_ok=True)
+
+    slide_parts, thumb_parts = [], []
+    for index, image_path in enumerate(images, start=1):
+        caption = captions[index - 1] if index - 1 < len(captions) else ""
+        out_name = f"s{index:03d}.jpg"
+        with Image.open(image_path) as im:
+            im = im.convert("RGB")
+            if im.width > 1600:
+                new_height = round(im.height * (1600 / im.width))
+                im = im.resize((1600, new_height), Image.LANCZOS)
+            im.save(img_dir / out_name, "JPEG", quality=80, optimize=True)
+
+        safe_caption = html.escape(caption)
+        alt = safe_caption or f"Slide {index}"
+        caption_html = f'<p class="slide-caption">{safe_caption}</p>' if safe_caption else ""
+        loading = "eager" if index <= 2 else "lazy"
+        slide_parts.append(
+            f'      <section class="slide-frame" id="slide-{index}">\n'
+            f'        <div class="slide"><img src="img/{out_name}" alt="{alt}" loading="{loading}">'
+            f'{caption_html}</div>\n      </section>'
+        )
+        thumb_parts.append(
+            f'    <button type="button" class="thumb" data-target="slide-{index}">'
+            f'<img src="img/{out_name}" alt=""><span>{index}</span></button>'
+        )
+
+    (site_dir / "index.html").write_text(
+        _PRESENTATION_HTML.format(
+            title=html.escape(site_name),
+            accent=accent,
+            thumbs="\n".join(thumb_parts),
+            slides="\n".join(slide_parts),
+            count=len(images),
+        ),
+        encoding="utf-8",
+    )
+    (site_dir / "styles.css").write_text(_PRESENTATION_CSS, encoding="utf-8")
+    (site_dir / "script.js").write_text(_PRESENTATION_JS, encoding="utf-8")
+
+    publish_dir = PRESENTATIONS_DIR / site_name
+    PRESENTATIONS_DIR.mkdir(parents=True, exist_ok=True)
+    if publish_dir.exists():
+        shutil.rmtree(publish_dir)
+    shutil.copytree(site_dir, publish_dir)
+
+    return (
+        f"published presentation site '{site_name}' with {len(images)} slides, "
+        f"reachable at /p/{site_name}/."
+    )
+
+
 TOOLS = {
     "read_repository_file": {
         "permission": "read_repository",
@@ -250,6 +439,22 @@ TOOLS = {
             'Args as JSON: {"filename": "report.xlsx", "data": [["Employee","Cost"],["writer",0.0123]]}'
         ),
         "fn": _create_spreadsheet,
+    },
+    "build_presentation_site": {
+        "permission": "build_presentation_sites",
+        "needs_context": ["task_id"],
+        "produces_artifact": "website",
+        "description": (
+            "build_presentation_site(site_name, captions, accent): build and publish a real, "
+            "browsable presentation website from the slide images in this task's uploaded .zip "
+            "archive (the Owner must attach one when submitting the task -- this fails if none "
+            "was attached). site_name is a URL slug (lowercase letters/digits/hyphens only). "
+            'captions is a JSON array of strings, one per slide in file order (use "" for none). '
+            "accent is an optional hex color for links/highlights (default #3b82f6). "
+            'Args as JSON: {"site_name": "t1-tender-pitch", "captions": ["Cover", "Agenda", ""], '
+            '"accent": "#e11d48"}'
+        ),
+        "fn": _build_presentation_site,
     },
 }
 

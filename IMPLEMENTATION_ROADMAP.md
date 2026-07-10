@@ -61,6 +61,24 @@ This is the primary implementation plan for Ego OS. It sequences work that is al
 
 ---
 
+## ✅ v0.4 — Delivery Company
+
+**Objective:** the company can accept a real external input (not just typed text) and produce a real external deliverable the Owner can hand to a client — closing the gap `architecture/007_PRESENTATION_WEBSITE_FORMAT.md` surfaced: a recurring, real deliverable type (a scroll-based presentation website, distilled from a completed client engagement) that none of the four wired specialists could actually build.
+
+**Capabilities added:**
+
+- ✅ **File Intake** — the Owner can attach a file (a `.zip` of slide images) when submitting a task, not just typed text. Implemented as an optional multipart `attachment` field on the task submission form, saved to `ego_os/uploads/<task_id>/` before the lifecycle runs.
+- ✅ **Presentation Website Generation** — a task can produce a real, live, browsable website, not just a downloadable file. Implemented as one deterministic tool, `build_presentation_site(site_name, captions, accent)`, gated on Designer's new `build_presentation_sites` permission: it extracts the task's uploaded archive, resizes each slide image with Pillow, generates a self-contained dark-theme scroll deck (index.html/styles.css/script.js — thumbnail nav, deck counter, no build step, matching `architecture/007`'s fixed visual contract) and publishes it to a fixed path on the already-provisioned production VPS, served at `/p/<site_name>/` through the existing `os.fiveseven.ru` nginx site. Deliberately a single tool call (like `create_document`/`create_spreadsheet`) rather than a multi-step agent loop — the image/HTML mechanics are ordinary code, not something that needs an LLM choreographing multiple tool calls per turn, so the existing one-tool-call-per-specialist-turn execution model did not need to change.
+- ✅ **Designer activated as a fifth specialist** — `designer` added to `EXECUTION_CAPABILITY` (capability `presentation_design`); `company/employees/core/designer.yaml` bumped to v1.1 with the `build_presentation_sites` permission.
+
+**Deliberately deferred (MVP scope, not the full `architecture/007` contract):** video hotspots and the interactive case/portfolio grid; mobile-optimized WebP variants; the derived PDF export; native `.pptx` upload (a designer-exported `.zip` of PNGs is the required input shape for now). These are real, scoped gaps to close in a later pass once the MVP deck format is validated against a real client deliverable, not oversights.
+
+**Exit criteria:** a real uploaded slide archive produces a real, publicly reachable presentation website on production — met, verified end to end.
+
+**Dependencies:** v0.3.
+
+---
+
 ## 🔜 v0.5 — Self-Managing Company
 
 **Objective:** the company recognizes and manages its own valuable output, and can test monetization under bounded oversight.
@@ -72,7 +90,7 @@ This is the primary implementation plan for Ego OS. It sequences work that is al
 
 **Exit criteria:** at least one Digital Asset is tracked independent of the task that produced it; Controlled Monetization exit criteria are defined only once a real candidate asset exists, not scoped against a hypothetical now.
 
-**Dependencies:** v0.3.
+**Dependencies:** v0.4.
 
 **Deferred:** monetization scaling and retirement steps of the Digital Asset Lifecycle; everything past Stage 3.
 
@@ -83,11 +101,3 @@ This is the primary implementation plan for Ego OS. It sequences work that is al
 **Objective:** the full vision in `docs/000_VISION_2.md` and `architecture/006` realized — Operating Company (Stage 4) and Capital Allocation (Stage 5).
 
 **Dependencies:** v0.5. Governed directly by `architecture/006` until v0.5 produces concrete outcomes to sequence against — not detailed further here to avoid scoping against a hypothetical.
-
----
-
-## Specified but not yet scheduled
-
-Capability inputs that are fully written down but have not yet been assigned a version. They exist so a future roadmap revision has real specification to sequence against, per the change-control rule at the top of this document — not because the company can do them today.
-
-- **Presentation Website deliverable** (`architecture/007_PRESENTATION_WEBSITE_FORMAT.md`) — a scroll-based, dark-theme "presentation as website" format (with a linked PDF export) distilled from a real completed client engagement. Requires capabilities Ego OS does not yet have: pixel-level image manipulation, static HTML/CSS/JS editing without a build step, remote file sync with verification, and structured-document-to-PDF generation with reproduced link positions. Not scoped into a version yet — needs an explicit decision on which employee (new or existing) owns it and how far outside the current sandboxed-repository tool model (`ego_os/tools.py`) it needs to reach.

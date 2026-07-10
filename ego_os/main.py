@@ -1,10 +1,12 @@
 import json
 import re
+import shutil
 from pathlib import Path
+from typing import Optional
 
 import markdown as md
 from dotenv import load_dotenv
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
@@ -143,10 +145,26 @@ def reject_proposal(proposal_id: int):
 
 
 @app.post("/tasks")
-def submit_task(request_text: str = Form(...), project_id: int = Form(...)):
+def submit_task(
+    request_text: str = Form(...),
+    project_id: int = Form(...),
+    attachment: Optional[UploadFile] = File(None),
+):
+    """A file attachment is optional and currently only used by the
+    Presentation Website capability (v0.4): a .zip of slide images, saved
+    before the lifecycle runs so a specialist's tool call can find it by
+    task_id."""
     if store.get_project(project_id) is None:
         project_id = store.ensure_default_project()
     task_id = store.create_task(request_text, project_id)
+    if attachment is not None and attachment.filename:
+        if not attachment.filename.lower().endswith(".zip"):
+            raise HTTPException(status_code=400, detail="attachment must be a .zip archive of slide images")
+        upload_dir = tools.UPLOADS_DIR / str(task_id)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        target = upload_dir / Path(attachment.filename).name
+        with target.open("wb") as f:
+            shutil.copyfileobj(attachment.file, f)
     lifecycle.run(task_id, project_id, request_text)
     return RedirectResponse(url=f"/tasks/{task_id}", status_code=303)
 

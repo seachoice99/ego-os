@@ -123,7 +123,7 @@
 
   <section>
     <h2>Assign work to the company</h2>
-    <form method="post" action="/tasks" id="task-form">
+    <form method="post" action="/tasks" id="task-form" enctype="multipart/form-data">
       <label for="project-select" style="display: block; margin-bottom: 0.3rem; font-size: 0.9rem; color: #444;">Project</label>
       <select name="project_id" id="project-select" style="padding: 0.4rem 0.6rem; font-size: 1rem; margin-bottom: 0.6rem;">
         {% for p in projects %}
@@ -132,7 +132,12 @@
       </select>
       <textarea name="request_text" rows="3" placeholder="Describe what you'd like the company to do..." required></textarea>
       <br>
-      <button type="submit" id="submit-btn">Submit</button>
+      <label style="display: block; margin: 0.6rem 0 0.3rem; font-size: 0.85rem; color: #666;">
+        Slide deck archive (optional — a .zip of PNG/JPG images, only used for Presentation Website requests)
+      </label>
+      <input type="file" name="attachment" accept=".zip">
+      <br>
+      <button type="submit" id="submit-btn" style="margin-top: 0.6rem;">Submit</button>
       <p class="working-note">The company is executing your task — this can take a few seconds while employees draft and review the work.</p>
     </form>
   </section>

@@ -111,6 +111,13 @@
     <div class="artifact-body markdown-body">
       {{ artifact.html | safe }}
     </div>
+    {% elif artifact.type == "website" %}
+    <div class="artifact-header"><span class="artifact-icon">&#127760;</span><h2>Presentation Website</h2></div>
+    <div class="artifact-body">
+      <p>Published as <strong>{{ artifact.site_name }}</strong> &mdash;
+        <a class="file-download" href="{{ artifact.url }}" target="_blank" rel="noopener">view live presentation &rarr;</a>
+      </p>
+    </div>
     {% else %}
     <div class="artifact-header"><span class="artifact-icon">&#128193;</span><h2>{{ artifact.type | capitalize }}</h2></div>
     <div class="artifact-body">

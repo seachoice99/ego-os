@@ -5,3 +5,4 @@ venv/
 .env
 ego_os/*.db
 ego_os/generated/
+ego_os/uploads/

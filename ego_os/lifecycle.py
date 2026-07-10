@@ -21,6 +21,7 @@ EXECUTION_CAPABILITY = {
     "researcher": "synthesis",
     "coder": "coding",
     "cfo": "cost_accounting",
+    "designer": "presentation_design",
 }
 
 
@@ -183,7 +184,12 @@ def _execute_tool_request(text, match, permissions, task_id):
         result = tools.call_tool(permissions, tool_name, context={"task_id": task_id}, **args)
         tool_def = tools.TOOLS.get(tool_name, {})
         artifact_type = tool_def.get("produces_artifact")
-        artifact = {"type": artifact_type, "filename": args["filename"]} if artifact_type and "filename" in args else None
+        if artifact_type == "website" and "site_name" in args:
+            artifact = {"type": "website", "site_name": args["site_name"], "url": f"/p/{args['site_name']}/"}
+        elif artifact_type and "filename" in args:
+            artifact = {"type": artifact_type, "filename": args["filename"]}
+        else:
+            artifact = None
         return result, f"Used tool '{tool_name}' with args {args}.", artifact
     except (tools.ToolError, ValueError, TypeError, json.JSONDecodeError) as exc:
         return f"Tool error: {exc}", f"Tool request for '{tool_name}' failed: {exc}", None
@@ -290,7 +296,12 @@ def run(task_id: int, project_id: int, request_text: str):
         total_cost += r_cost
         timeline.append({"step": "revision", "employee": specialist_id, "detail": "Produced a corrected draft based on QA feedback."})
         timeline.extend(r_tool_events)
-        artifacts.extend(r_artifacts)
+        # The revision is a full redo of the same request, not an addition to
+        # it -- if it produced its own artifacts, those replace the pre-revision
+        # ones instead of accumulating alongside them (found live: a revised
+        # tool-using task showed two duplicate artifact cards for the same file).
+        if r_artifacts:
+            artifacts = r_artifacts
 
         qa_note, q2_in, q2_out, q2_cost = _run_qa(request_text, draft_text)
         total_in += q2_in
