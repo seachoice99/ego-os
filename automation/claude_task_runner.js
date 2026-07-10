@@ -14,8 +14,26 @@ const LOG_DIR = path.join(LOCAL, "EgoOS", "claude-runner", "logs");
 const CLAUDE = path.join(process.env.APPDATA || "", "npm", "claude.cmd");
 const OWNER_ONLY = new Set(["destructive_data", "irreversible_migration", "payments", "secrets", "external_infrastructure"]);
 
-function run(file, args, timeout = 60000) {
-  return cp.spawnSync(file, args, { cwd: ROOT, encoding: "utf8", timeout, windowsHide: true });
+function run(file, args, timeout = 60000, opts = {}) {
+  return cp.spawnSync(file, args, { cwd: ROOT, encoding: "utf8", timeout, windowsHide: true, ...opts });
+}
+
+// Windows cannot execute a .cmd file directly via spawnSync -- without
+// shell:true it fails immediately with EINVAL (verified: `claude.cmd
+// --version` errors out with no output at all). shell:true fixes that,
+// but on Windows it routes the command through cmd.exe, which *does*
+// interpret shell metacharacters (&, |, ^, ") in argv elements -- verified
+// live: a prompt string containing "& echo INJECTED &" passed as an argv
+// element was executed as a second command, not treated as literal text.
+// The fix is to never put untrusted content (the task prompt) in argv at
+// all: only fixed, code-controlled flags go in args, and the actual
+// prompt -- which embeds task.yaml fields the runner doesn't otherwise
+// sanitize -- is piped over stdin instead, exactly as `claude -p` already
+// supports ("useful for pipes" per its own --help text). Verified live
+// with the real CLI: the same dangerous string passed via stdin arrived
+// byte-for-byte with no shell interpretation and no injected command.
+function runClaude(promptText, args, timeout) {
+  return run(CLAUDE, args, timeout, { shell: true, input: promptText });
 }
 
 function load(file) {
@@ -41,6 +59,11 @@ function preflight() {
   const branch = run("git", ["branch", "--show-current"]).stdout.trim();
   if (branch !== "main" || head !== origin) return [false, "local main must exactly match origin/main"];
   if (!fs.existsSync(CLAUDE)) return [false, `Claude CLI not found at ${CLAUDE}`];
+  // Confirms the .cmd is actually invokable this way (shell:true, absolute
+  // path, no untrusted content in argv) before committing to a task run --
+  // catches an EINVAL/quoting regression before it burns a task attempt.
+  const probe = runClaude("", ["--version"], 15000);
+  if (probe.status !== 0 || probe.error) return [false, `Claude CLI probe failed: ${(probe.error && probe.error.message) || probe.stderr || "non-zero exit"}`];
   return [true, head];
 }
 
@@ -103,7 +126,7 @@ function execute(selected, maxTurns, timeoutMinutes) {
   const stamp = new Date().toISOString().replaceAll(/[:.]/g, "-");
   const logFile = path.join(LOG_DIR, `${stamp}-${task.id}.log`);
   console.log(`RUNNING ${task.id} — ${logFile}`);
-  const output = run(CLAUDE, ["-p", makePrompt(file, task, detail), "--output-format", "stream-json", "--verbose",
+  const output = runClaude(makePrompt(file, task, detail), ["-p", "--output-format", "stream-json", "--verbose",
     "--max-turns", String(maxTurns), "--dangerously-skip-permissions"], timeoutMinutes * 60000);
   fs.writeFileSync(logFile, (output.stdout || "") + (output.stderr || ""), "utf8");
   const current = load(file);
