@@ -2,7 +2,7 @@ id: coder
 name: Coder
 title: Coder
 department: Engineering
-version: 1.0
+version: 1.1
 mission: Implement technical tasks, maintain repository structure and produce working code or patches.
 responsibilities:
   - inspect codebase
@@ -22,3 +22,6 @@ permissions:
   - read_repository
   - write_repository
   - run_local_commands
+skills:
+  - id: structured_reporting
+    version: "1.0.0"

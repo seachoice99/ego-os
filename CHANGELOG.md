@@ -2,6 +2,19 @@
 
 All notable changes to Ego OS are recorded here, newest first. See `IMPLEMENTATION_ROADMAP.md` for the forward-looking plan this changelog reports against.
 
+## [Unreleased] — First internal Skill: structured_reporting (SR-03)
+
+### Added
+
+- **`skills/registry/structured_reporting/1.0.0/`** — the first real internal Skill: a shared report-assembly procedure (goal, actions taken, evidence, changed files/artifacts, tests/checks, risks, cost, open questions, final status), `trust: approved`, `lifecycle: active`, `origin: internal`. Contains no Persona/role text, no credentials, no specific model, no Tool implementation, no extra permissions, no production data.
+- **Attached to Coder and Researcher** (both bumped to v1.1) — the first employees to reference a real Skill.
+- **Skill instruction injection** (`ego_os/lifecycle.py`) — a resolved Skill's entrypoint content is now included in the specialist's prompt, positioned *after* the Persona framing ("You are the {title}... Mission: ...") and never before it, so a Skill shapes *how* work is reported without ever displacing *who* the specialist is or its own role-specific reporting rules (Coder's "list changed files"/"report tests run", Researcher's "cite sources"/"highlight uncertainty" both still apply, verified directly against real report content).
+
+### Verified
+
+- A real (non-mocked) local Coder task produced a report following the skill's exact 9-section structure, with real tool-read evidence and correct `skills_used` traceability.
+- 7 new golden tests against the real, committed skill package (not a synthetic fixture): structure preserved for both employees, Persona ordering in the actual prompt, permissions unwidened, fail-closed on a missing skill, and old task history unaffected.
+
 ## [Unreleased] — Employee Skill references (SR-02)
 
 ### Added

@@ -24,6 +24,27 @@ def _resolve_employee_skills(skill_refs):
     return [skills.get_exact_version(ref["id"], ref["version"]) for ref in (skill_refs or [])]
 
 
+def _skill_instructions_block(resolved_skills):
+    """Render each resolved Skill's entrypoint content into a labeled
+    prompt section (SR-03), read directly from its already
+    digest-verified entrypoint file -- never re-interpreted or executed,
+    just included as instruction text. Comes *after* the Persona framing
+    ("You are the {title}... Mission: ...") in the prompt, never before
+    it, so a Skill can shape *how* the work is reported without ever
+    displacing *who* the specialist is or what it's accountable for."""
+    if not resolved_skills:
+        return ""
+    blocks = []
+    for manifest in resolved_skills:
+        entrypoint_path = manifest["_package_dir"] / manifest["entrypoint"]["path"]
+        instructions = entrypoint_path.read_text(encoding="utf-8")
+        blocks.append(
+            f"Follow this Skill ({manifest['id']}@{manifest['version']}) for how to structure "
+            f"your work and final report:\n\n{instructions}"
+        )
+    return "\n\n".join(blocks) + "\n\n"
+
+
 def _today_line():
     """Models don't otherwise know today's real date, and will misjudge
     which live search/tool results are current vs. future -- found during
@@ -147,7 +168,7 @@ def _tool_prompt_block(permissions):
     )
 
 
-def _run_specialist(specialist_id, title, mission, request_text, memory_context, permissions, task_id, feedback=None):
+def _run_specialist(specialist_id, title, mission, request_text, memory_context, permissions, task_id, resolved_skills=None, feedback=None):
     """Run one specialist turn. If the specialist's first reply is a
     TOOL_REQUEST, the requested tool is executed exactly once and the
     specialist is asked to produce its final artifact using the tool's
@@ -161,11 +182,13 @@ def _run_specialist(specialist_id, title, mission, request_text, memory_context,
     # Only relevant for a specialist whose tools actually consume an
     # upload -- stating it for everyone else would just be noise.
     attachment_block = _attachment_line(task_id) if "build_presentation_sites" in permissions else ""
+    skill_block = _skill_instructions_block(resolved_skills)
     prompt = (
         f"You are the {title} at a digital company. Mission: {mission}\n\n"
         f"{_today_line()}"
         f"{attachment_block}"
         f"{context_block}"
+        f"{skill_block}"
         f"Fulfil this request from the Owner as a clear, complete artifact:\n\n{request_text}"
         f"{revision_block}"
         f"{_tool_prompt_block(permissions)}"
@@ -385,7 +408,8 @@ def run(task_id: int, project_id: int, request_text: str):
     store.set_employee_status(specialist_id, "assigned")
     execution_start = time.perf_counter()
     draft_text, w_in, w_out, w_cost, w_tool_events, artifacts = _run_specialist(
-        specialist_id, roster["title"], roster["mission"], request_text, memory_context, roster["permissions"], task_id
+        specialist_id, roster["title"], roster["mission"], request_text, memory_context, roster["permissions"], task_id,
+        resolved_skills=resolved_skills,
     )
     execution_duration_ms = _elapsed_ms(execution_start)
     total_in += w_in
@@ -429,7 +453,7 @@ def run(task_id: int, project_id: int, request_text: str):
         revision_start = time.perf_counter()
         draft_text, r_in, r_out, r_cost, r_tool_events, r_artifacts = _run_specialist(
             specialist_id, roster["title"], roster["mission"], request_text, memory_context,
-            roster["permissions"], task_id, feedback=qa_note,
+            roster["permissions"], task_id, resolved_skills=resolved_skills, feedback=qa_note,
         )
         revision_duration_ms = _elapsed_ms(revision_start)
         total_in += r_in

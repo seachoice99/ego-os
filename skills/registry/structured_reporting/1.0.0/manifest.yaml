@@ -1,0 +1,39 @@
+schema_version: "1.0"
+id: structured_reporting
+version: "1.0.0"
+name: Structured Reporting
+description: A shared report-assembly procedure -- goal, actions taken, evidence, changed files/artifacts, tests/checks, risks, cost, open questions, final status -- any Employee can apply without duplicating it in every Employee's own prompt.
+origin:
+  type: internal
+  source: ego-os
+  revision: null
+  digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  author: FiveSeven
+  license: proprietary
+trust:
+  state: approved
+  approved_by: owner
+  approved_at: "2026-07-10T00:00:00Z"
+compatibility:
+  ego_os: ">=0.4,<1.0"
+  manifest_schema: "1.x"
+entrypoint:
+  type: instructions
+  path: SKILL.md
+  digest: "sha256:2c87c8bf2828fe14d620a1e1d6f5a547145e8fc0fbef17ff5a04425efb53b489"
+dependencies:
+  skills: []
+requirements:
+  model_capabilities: []
+  knowledge_classes: []
+  tools: []
+  permissions: []
+  network: none
+  filesystem: none
+tests:
+  suite: null
+  minimum_score: null
+lifecycle:
+  state: active
+  replaces: null
+  rollback_to: null

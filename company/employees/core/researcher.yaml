@@ -2,7 +2,7 @@ id: researcher
 name: Researcher
 title: Researcher
 department: Research
-version: 1.0
+version: 1.1
 mission: Find, verify and synthesize information for decisions and execution.
 responsibilities:
   - gather relevant information
@@ -21,3 +21,6 @@ permissions:
   - use_web
   - read_project_memory
   - create_research_notes
+skills:
+  - id: structured_reporting
+    version: "1.0.0"
