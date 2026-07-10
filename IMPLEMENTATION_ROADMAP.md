@@ -83,3 +83,11 @@ This is the primary implementation plan for Ego OS. It sequences work that is al
 **Objective:** the full vision in `docs/000_VISION_2.md` and `architecture/006` realized — Operating Company (Stage 4) and Capital Allocation (Stage 5).
 
 **Dependencies:** v0.5. Governed directly by `architecture/006` until v0.5 produces concrete outcomes to sequence against — not detailed further here to avoid scoping against a hypothetical.
+
+---
+
+## Specified but not yet scheduled
+
+Capability inputs that are fully written down but have not yet been assigned a version. They exist so a future roadmap revision has real specification to sequence against, per the change-control rule at the top of this document — not because the company can do them today.
+
+- **Presentation Website deliverable** (`architecture/007_PRESENTATION_WEBSITE_FORMAT.md`) — a scroll-based, dark-theme "presentation as website" format (with a linked PDF export) distilled from a real completed client engagement. Requires capabilities Ego OS does not yet have: pixel-level image manipulation, static HTML/CSS/JS editing without a build step, remote file sync with verification, and structured-document-to-PDF generation with reproduced link positions. Not scoped into a version yet — needs an explicit decision on which employee (new or existing) owns it and how far outside the current sandboxed-repository tool model (`ego_os/tools.py`) it needs to reach.
