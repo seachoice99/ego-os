@@ -1,0 +1,34 @@
+{
+  "id": "SR-04",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Skills UI (read-only) and audit trail",
+  "prompt": "Add GET /skills (list: id, name, version, trust state, lifecycle state, origin, license, digest status, which employees use it, requirements, permissions required, last check) and GET /skills/{skill_id}/{version} (manifest detail: no secrets, HTML-escaped, does not execute skill content, read-only -- no install/import/registry-mutation route). Add an append-only audit trail (simplest option: JSONL file in a runtime data directory, or one additive DB table -- not mixed into the immutable skill package itself) recording discovered/created, validated, attached, detached, deprecated, revoked, and resolution-failure events, with no raw prompts, credentials, or hidden chain-of-thought. Both routes require the existing Owner auth.",
+  "acceptance": [
+    "GET /skills and GET /skills/{id}/{version} implemented, both behind existing Owner Basic Auth",
+    "Detail page HTML-escapes manifest content and never executes it; no route allows registry mutation, install, or import",
+    "Audit trail is append-only, contains only the listed event types, never raw prompts/credentials/chain-of-thought",
+    "Tests cover: list page, detail page, auth required (401 unauthenticated), HTML escaping, unknown skill 404, revoked skill visible but not executable, audit append behavior, audit contains no secrets, employee-usage mapping correctness, and that existing routes are unaffected",
+    "Full test suite (v0.4.1 + SR-01 + SR-02 + SR-03 + SR-04) passes",
+    "Commit, push, deploy succeed; production returns 401 unauthenticated and 200 authenticated on /skills"
+  ],
+  "allowed_paths": [
+    "ego_os/main.py",
+    "ego_os/skills.py",
+    "ego_os/templates/skills.html",
+    "ego_os/templates/skill_detail.html",
+    "tests/",
+    "IMPLEMENTATION_ROADMAP.md",
+    "CHANGELOG.md"
+  ],
+  "forbidden_paths": [
+    "ego_os/auth.py",
+    "ego_os/tools.py",
+    "architecture/",
+    "memory/decisions/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "automatic",
+  "result": null
+}

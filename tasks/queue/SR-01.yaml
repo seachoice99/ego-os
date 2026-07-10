@@ -1,0 +1,38 @@
+{
+  "id": "SR-01",
+  "status": "ready",
+  "priority": "P1",
+  "title": "Skill Registry foundation (filesystem-based, no new DB/deps)",
+  "prompt": "Build a filesystem-based local Skill Registry per architecture/008, architecture/010, architecture/011, ADR-0004, ADR-0005: skills/registry/<id>/<version>/manifest.yaml + SKILL.md + tests/, indexed by no new database and no new runtime dependency. Implement ego_os/skills.py able to: parse a manifest; validate required fields (schema_version, id, version, name, description, origin, trust, compatibility, entrypoint, requirements, lifecycle at minimum); validate id is a safe stable lower-snake-case string; validate version is a supported subset of Semantic Versioning (MAJOR.MINOR.PATCH, no pre-release/build metadata required for MVP) implemented without adding a third-party semver library; validate trust.state is one of discovered/quarantined/reviewing/approved/deprecated/revoked; validate lifecycle.state is one of active/deprecated/revoked (or equivalent); validate the entrypoint path is relative, does not escape the package root (no path traversal, no absolute paths), and that the digest field is present; detect a missing entrypoint file; detect a duplicate id+version already registered; list all skills deterministically; resolve an exact version; resolve the highest compatible version under a range; fail closed (raise a clear, typed error, no stack trace suitable for direct display) for a revoked skill or any validation failure. This registry must not execute any skill content -- it only reads and validates metadata. Do not grant any new production permission. Do not touch company/employees/*.yaml or ego_os/lifecycle.py in this task.",
+  "acceptance": [
+    "skills/registry/ and ego_os/skills.py exist with the described validation/listing/resolution behavior",
+    "New tests cover: valid manifest, malformed YAML, missing required field, invalid id, invalid version, bad/missing digest, path traversal attempt, missing entrypoint file, duplicate id+version, revoked skill fail-closed, deterministic listing, exact version resolution, compatible version resolution, incompatible version rejection",
+    "All existing v0.4.1 tests (43) still pass",
+    "Registry code never executes or imports skill content, only reads/validates manifest metadata",
+    "No change to company/employees/*.yaml, ego_os/lifecycle.py, ego_os/main.py, or production permissions",
+    "Separate commit, pushed to origin/main, production health check (401 unauthenticated, 200 authenticated) passes after deploy"
+  ],
+  "allowed_paths": [
+    "ego_os/skills.py",
+    "skills/",
+    "tests/test_skills_registry.py",
+    "IMPLEMENTATION_ROADMAP.md",
+    "CHANGELOG.md"
+  ],
+  "forbidden_paths": [
+    "company/employees/",
+    "ego_os/lifecycle.py",
+    "ego_os/main.py",
+    "ego_os/store.py",
+    "ego_os/worker.py",
+    "architecture/008_SKILLS_AND_CAPABILITY_MANAGEMENT.md",
+    "architecture/010_CAPABILITY_DOMAIN_MODEL.md",
+    "architecture/011_SKILL_MANIFEST_SPECIFICATION.md",
+    "architecture/012_EMPLOYEE_SKILL_COMPOSITION_CONTRACT.md",
+    "memory/decisions/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "automatic",
+  "result": null
+}

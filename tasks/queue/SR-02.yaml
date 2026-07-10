@@ -1,0 +1,40 @@
+{
+  "id": "SR-02",
+  "status": "blocked",
+  "priority": "P1",
+  "title": "Employee Skill references (backward compatible)",
+  "prompt": "Extend Employee YAML with an optional `skills` field (list of {id, version}) that is backward compatible: existing Employee YAML files without `skills` continue to work unchanged. When an Employee's definition is loaded/synced, validate each referenced skill exists in the Registry (SR-01), is not revoked, and its digest/entrypoint check passes; a missing/revoked/tampered skill must block that Employee's use before any model invocation, with a clear operational error, not a crash. Skill requirements must never add Employee permissions -- permissions remain exactly what company/employees/*.yaml's existing `permissions` field grants. Add execution/report traceability: record skill id, skill version, and manifest/package digest alongside the existing employee_version traceability from v0.4.1 (reports.employee_versions), via an additive, idempotent DB migration (new column/table only, never rename/drop). Old reports without this data must continue to open/render normally. Take a production DB backup before deploy and verify integrity before and after.",
+  "acceptance": [
+    "Employee YAML optional `skills` field implemented; employees without it behave exactly as before",
+    "Loading/using an Employee with a missing or revoked skill reference fails closed before any model call, with a clear message",
+    "Skill requirements never appear in the employee's granted permissions",
+    "New DB column(s)/table are additive and idempotent (safe to run init_db() repeatedly, safe against a pre-existing populated DB)",
+    "Old reports (no skill data) still load and render on the task page",
+    "Tests cover: employee without skills, employee with a valid skill, two employees sharing one skill, missing skill, revoked skill, digest mismatch, skill not extending permissions, a historical report keeping its original skill version after a newer one is registered, and an old-schema DB migrating safely",
+    "All existing v0.4.1 tests (43) plus SR-01 tests still pass",
+    "Production DB backup taken and integrity-checked before this deploy; commit, push, deploy, health check, and one safe real worker task pass after"
+  ],
+  "allowed_paths": [
+    "ego_os/skills.py",
+    "ego_os/employees.py",
+    "ego_os/store.py",
+    "ego_os/lifecycle.py",
+    "company/employees/core/*.yaml",
+    "tests/",
+    "IMPLEMENTATION_ROADMAP.md",
+    "CHANGELOG.md"
+  ],
+  "forbidden_paths": [
+    "ego_os/main.py",
+    "ego_os/auth.py",
+    "architecture/008_SKILLS_AND_CAPABILITY_MANAGEMENT.md",
+    "architecture/010_CAPABILITY_DOMAIN_MODEL.md",
+    "architecture/011_SKILL_MANIFEST_SPECIFICATION.md",
+    "architecture/012_EMPLOYEE_SKILL_COMPOSITION_CONTRACT.md",
+    "memory/decisions/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "automatic",
+  "result": null
+}

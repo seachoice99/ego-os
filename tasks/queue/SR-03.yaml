@@ -1,0 +1,38 @@
+{
+  "id": "SR-03",
+  "status": "blocked",
+  "priority": "P1",
+  "title": "First internal Skill: structured_reporting, attached to 2+ Employees",
+  "prompt": "Create the first internal Skill package: skills/registry/structured_reporting/1.0.0/ with manifest.yaml (origin internal, trust approved, lifecycle active) and SKILL.md describing a shared report-assembly procedure: goal, actions taken, evidence, changed files/artifacts, tests/checks, risks, cost, open questions, final status. The Skill must not contain Persona/role text, credentials, a specific model, Tool implementations, extra permissions, or production data. Attach it to at least two Employees where genuinely justified (coder, and researcher or orchestrator), bumping their Employee version and preserving historical compatibility (old reports keep referencing the old employee version). Write golden tests proving: consistent shared report structure across both employees; each employee's role-specific reporting rules still apply (coder still reports changed files/tests; researcher still reports sources/uncertainty, or orchestrator still reports staffing decisions); the skill does not erase Persona; the skill does not change Tool permissions; missing the skill blocks before any model call; old Task history is unchanged. After deploy, run at least two real production tasks (one Coder-or-safe-technical-report task, one Researcher/Orchestrator task) and confirm both execution logs record structured_reporting@1.0.0 while keeping their own role-specific content.",
+  "acceptance": [
+    "skills/registry/structured_reporting/1.0.0/manifest.yaml + SKILL.md exist, trust=approved, lifecycle=active, origin=internal",
+    "Skill contains no persona/credentials/model/tool-implementation/permission/production-data content",
+    "At least two employees (coder + researcher-or-orchestrator) reference the skill; employee versions bumped; old reports keep the old version",
+    "Golden tests pass for shared structure + role-specific rules preserved for both employees",
+    "Missing skill blocks before model invocation",
+    "Two real production tasks delivered after deploy, both logging structured_reporting@1.0.0 in execution_events, each keeping distinct role-specific content",
+    "All existing tests (v0.4.1 + SR-01 + SR-02) still pass",
+    "Commit, push, deploy succeed; HTTP 401 unauthenticated / 200 authenticated preserved; public /p/ presentation sites unaffected"
+  ],
+  "allowed_paths": [
+    "skills/registry/structured_reporting/",
+    "company/employees/core/coder.yaml",
+    "company/employees/core/researcher.yaml",
+    "company/employees/core/orchestrator.yaml",
+    "ego_os/lifecycle.py",
+    "tests/",
+    "IMPLEMENTATION_ROADMAP.md",
+    "CHANGELOG.md"
+  ],
+  "forbidden_paths": [
+    "ego_os/main.py",
+    "ego_os/auth.py",
+    "ego_os/tools.py",
+    "architecture/",
+    "memory/decisions/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "automatic",
+  "result": null
+}
