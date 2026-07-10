@@ -217,6 +217,69 @@ _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{3}$|^#[0-9a-fA-F]{6}$")
 _SLIDE_IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
 _DEFAULT_ACCENT = "#3b82f6"
 
+_YOUTUBE_RE = re.compile(
+    r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/shorts/)([\w-]{6,})"
+)
+_VK_VIDEO_RE = re.compile(r"vk\.com/video(-?\d+)_(\d+)")
+
+
+def _classify_link(url: str) -> dict:
+    """A link recovered from a PDF is either a known video host (rendered
+    as an in-page modal hotspot, per architecture/007's video pop-up
+    contract) or a plain link (opens in a new tab like any other link on
+    a slide) -- never navigation away from the deck for a video."""
+    match = _YOUTUBE_RE.search(url)
+    if match:
+        return {"kind": "video", "embed": f"https://www.youtube.com/embed/{match.group(1)}"}
+    match = _VK_VIDEO_RE.search(url)
+    if match:
+        oid, vid = match.group(1), match.group(2)
+        return {"kind": "video", "embed": f"https://vk.com/video_ext.php?oid={oid}&id={vid}"}
+    return {"kind": "link", "url": url}
+
+
+def _extract_pdf_links(pdf) -> dict:
+    """Map 1-based PDF page number -> list of {kind, url_or_embed, left,
+    top, width, height} hotspots, with position as a percentage of the
+    page's own dimensions -- derived directly from the PDF's real link
+    annotation rects, never eyeballed, so it survives any later resize."""
+    links_by_page = {}
+    for page_index, page in enumerate(pdf, start=1):
+        hotspots = []
+        for link in page.get_links():
+            if link.get("kind") != fitz.LINK_URI or not link.get("uri"):
+                continue
+            rect = link["from"]
+            page_rect = page.rect
+            hotspot = _classify_link(link["uri"])
+            hotspot.update({
+                "left": max(0.0, rect.x0 / page_rect.width * 100),
+                "top": max(0.0, rect.y0 / page_rect.height * 100),
+                "width": min(100.0, (rect.x1 - rect.x0) / page_rect.width * 100),
+                "height": min(100.0, (rect.y1 - rect.y0) / page_rect.height * 100),
+            })
+            hotspots.append(hotspot)
+        if hotspots:
+            links_by_page[page_index] = hotspots
+    return links_by_page
+
+
+def _hotspot_html(hotspots) -> str:
+    parts = []
+    for h in hotspots:
+        style = f"left:{h['left']:.2f}%;top:{h['top']:.2f}%;width:{h['width']:.2f}%;height:{h['height']:.2f}%;"
+        if h["kind"] == "video":
+            parts.append(
+                f'<button type="button" class="link-hotspot" style="{style}" '
+                f'data-video-embed="{html.escape(h["embed"])}" aria-label="Play video"></button>'
+            )
+        else:
+            parts.append(
+                f'<a class="link-hotspot" style="{style}" href="{html.escape(h["url"])}" '
+                f'target="_blank" rel="noopener" aria-label="Open link"></a>'
+            )
+    return "\n".join(parts)
+
 _PRESENTATION_HTML = """<!doctype html>
 <html>
 <head>
@@ -240,6 +303,12 @@ _PRESENTATION_HTML = """<!doctype html>
       <span class="deck-counter"><span id="deck-current">1</span> / {count}</span>
       <button type="button" class="deck-nav-btn" id="deck-next" aria-label="Next slide">&#9660;</button>
     </div>
+  </div>
+</div>
+<div class="video-modal" id="videoModal">
+  <div class="video-modal-inner">
+    <button type="button" class="video-modal-close" id="videoModalClose" aria-label="Close">&times;</button>
+    <div class="video-modal-frame"><iframe id="videoModalIframe" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>
   </div>
 </div>
 <script src="script.js"></script>
@@ -271,8 +340,22 @@ html, body { margin: 0; padding: 0; height: 100%; background: #0b0d12; color: #e
 .main-viewer { flex: 1; overflow-y: scroll; scroll-snap-type: y proximity; position: relative; }
 .slide-frame { scroll-snap-align: start; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
 .slide { max-width: 100%; text-align: center; }
-.slide img { max-width: 100%; max-height: 92vh; display: block; margin: 0 auto; border-radius: 4px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+.slide-image-wrap { position: relative; display: inline-block; max-width: 100%; line-height: 0; }
+.slide-image-wrap img { max-width: 100%; max-height: 92vh; display: block; margin: 0 auto; border-radius: 4px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
 .slide-caption { color: #aab; margin-top: 0.8rem; font-size: 0.95rem; }
+.link-hotspot { position: absolute; border: 0; background: rgba(255,255,255,0); cursor: pointer; display: block; }
+.link-hotspot:hover, .link-hotspot:focus-visible { background: rgba(255,255,255,0.1); outline: 2px solid var(--accent); outline-offset: -2px; }
+.video-modal {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85);
+  z-index: 1000; align-items: center; justify-content: center; padding: 2rem;
+}
+.video-modal.open { display: flex; }
+.video-modal-inner { position: relative; width: min(90vw, 1100px); aspect-ratio: 16 / 9; }
+.video-modal-frame, .video-modal-frame iframe { width: 100%; height: 100%; border: 0; }
+.video-modal-close {
+  position: absolute; top: -2.4rem; right: 0; background: none; border: none;
+  color: #fff; font-size: 1.8rem; line-height: 1; cursor: pointer;
+}
 .deck-nav {
   position: fixed; right: 1rem; bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;
   background: rgba(0,0,0,0.55); border-radius: 999px; padding: 0.3rem 0.5rem;
@@ -328,6 +411,31 @@ _PRESENTATION_JS = """(function () {
   document.addEventListener('keydown', function (e) {
     if (e.key === 'ArrowUp' || e.key === 'PageUp') { e.preventDefault(); goTo(current - 1); }
     if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); goTo(current + 1); }
+    if (e.key === 'Escape') { closeVideoModal(); }
+  });
+
+  // Video hotspots recovered from the source PDF's own links open in a
+  // shared in-page pop-up instead of navigating away from the deck.
+  var videoModal = document.getElementById('videoModal');
+  var videoIframe = document.getElementById('videoModalIframe');
+
+  function openVideoModal(embedUrl) {
+    videoIframe.src = embedUrl;
+    videoModal.classList.add('open');
+  }
+  function closeVideoModal() {
+    videoModal.classList.remove('open');
+    videoIframe.src = '';
+  }
+  document.getElementById('videoModalClose').addEventListener('click', closeVideoModal);
+  videoModal.addEventListener('click', function (e) {
+    if (e.target === videoModal) closeVideoModal();
+  });
+  document.querySelectorAll('[data-video-embed]').forEach(function (btn) {
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      openVideoModal(btn.getAttribute('data-video-embed'));
+    });
   });
 
   if ('IntersectionObserver' in window) {
@@ -349,10 +457,13 @@ _PRESENTATION_JS = """(function () {
 def _build_presentation_site(site_name: str, captions, task_id: int, accent: str = None) -> str:
     """Build and publish a real, browsable presentation website from this
     task's uploaded slide deck -- a .zip of images, or a .pdf (each page
-    rendered to an image) -- per architecture/007's MVP slice: dark theme,
-    vertical scroll, thumbnail nav, deck counter (video hotspots/portfolio
-    grid/derived-PDF-export deliberately deferred; that's the site being
-    exported back to PDF, unrelated to accepting a PDF as input here).
+    rendered to an image, its real link annotations recovered and restored
+    as clickable hotspots -- a known video host opens in the shared in-page
+    pop-up per architecture/007's video contract, anything else opens in a
+    new tab) -- per architecture/007's MVP slice: dark theme, vertical
+    scroll, thumbnail nav, deck counter (the interactive portfolio grid and
+    the derived-PDF-export -- the site exported back to PDF, unrelated to
+    accepting a PDF as input here -- remain deliberately deferred).
 
     Deliberately one deterministic tool call rather than a multi-step
     agent loop: the image resize / HTML generation / publish steps are
@@ -384,6 +495,7 @@ def _build_presentation_site(site_name: str, captions, task_id: int, accent: str
     source_dir.mkdir(parents=True, exist_ok=True)
     source_dir_resolved = source_dir.resolve()
     source_file = sources[0]
+    links_by_page = {}
 
     if source_file.suffix.lower() == ".zip":
         with zipfile.ZipFile(source_file) as zf:
@@ -399,7 +511,10 @@ def _build_presentation_site(site_name: str, captions, task_id: int, accent: str
         # .pdf: render each page to a PNG at 2x scale (~144 DPI) -- plenty
         # of source resolution for the later resize-to-1600px-wide step,
         # without the huge intermediate files a higher zoom would produce.
+        # Real link annotations (URL, video, etc.) are recovered here too,
+        # while page/rect dimensions are still available.
         with fitz.open(source_file) as pdf:
+            links_by_page = _extract_pdf_links(pdf)
             zoom = fitz.Matrix(2, 2)
             for page_index, page in enumerate(pdf, start=1):
                 pixmap = page.get_pixmap(matrix=zoom)
@@ -428,9 +543,12 @@ def _build_presentation_site(site_name: str, captions, task_id: int, accent: str
         alt = safe_caption or f"Slide {index}"
         caption_html = f'<p class="slide-caption">{safe_caption}</p>' if safe_caption else ""
         loading = "eager" if index <= 2 else "lazy"
+        hotspots_html = _hotspot_html(links_by_page.get(index, []))
         slide_parts.append(
             f'      <section class="slide-frame" id="slide-{index}">\n'
-            f'        <div class="slide"><img src="img/{out_name}" alt="{alt}" loading="{loading}">'
+            f'        <div class="slide"><div class="slide-image-wrap">'
+            f'<img src="img/{out_name}" alt="{alt}" loading="{loading}">'
+            f'{hotspots_html}</div>'
             f'{caption_html}</div>\n      </section>'
         )
         thumb_parts.append(
@@ -457,9 +575,11 @@ def _build_presentation_site(site_name: str, captions, task_id: int, accent: str
         shutil.rmtree(publish_dir)
     shutil.copytree(site_dir, publish_dir)
 
+    total_links = sum(len(v) for v in links_by_page.values())
+    links_note = f" Recovered {total_links} link(s) from the source PDF, restored as clickable hotspots (opening a video-hosting link in an in-page pop-up)." if total_links else ""
     return (
         f"published presentation site '{site_name}' with {len(images)} slides, "
-        f"reachable at /p/{site_name}/."
+        f"reachable at /p/{site_name}/.{links_note}"
     )
 
 
@@ -519,9 +639,11 @@ TOOLS = {
         "description": (
             "build_presentation_site(site_name, captions, accent): build and publish a real, "
             "browsable presentation website from this task's uploaded slide deck -- a .zip of "
-            ".png/.jpg/.jpeg images, or a .pdf (each page becomes one slide) -- attached when "
-            "the task was submitted (fails if nothing was attached). site_name is a URL slug "
-            "(lowercase letters/digits/hyphens only). "
+            ".png/.jpg/.jpeg images, or a .pdf (each page becomes one slide; any real links in "
+            "the PDF are automatically recovered and restored as clickable hotspots, with a "
+            "YouTube/VK video link opening in an in-page pop-up instead of navigating away) -- "
+            "attached when the task was submitted (fails if nothing was attached). site_name is "
+            "a URL slug (lowercase letters/digits/hyphens only). "
             'captions is a JSON array of strings, one per slide in file order (use "" for none). '
             "accent is an optional hex color for links/highlights (default #3b82f6). "
             'Args as JSON: {"site_name": "t1-tender-pitch", "captions": ["Cover", "Agenda", ""], '

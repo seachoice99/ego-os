@@ -21,6 +21,11 @@ All notable changes to Ego OS are recorded here, newest first. See `IMPLEMENTATI
 - A specialist with `build_presentation_sites` had no way to know whether a file was actually attached to its task and sometimes guessed wrong, telling the Owner to attach a PDF without ever attempting the tool even when a real file was present. Fixed by stating the actual fact (attached or not, and the filename) directly in the specialist's prompt instead of leaving it to guess from the request's wording.
 - A generic request without an explicit "As Designer..." framing (e.g. "сделай сайт из этого pdf") triggered Capability Gap Handling instead of matching the already-capable Designer -- reproduced live, drafted a redundant "PDF-to-Web Conversion Specialist" proposal. `designer.yaml`'s mission/capabilities weren't concrete enough for the Orchestrator's staffing model to reliably connect a plain "PDF/website" request to Designer. Made the roster line explicit (mentions PDF/zip and "no other role can do this" directly, added a `pdf_to_website_conversion` capability); re-verified against 8 phrasings including the exact one that failed, all matched Designer.
 
+### Added (generated presentation site template)
+
+- **PDF link recovery** — a source `.pdf`'s real link annotations are recovered per page (exact URL and position, derived from the PDF's own rects) and restored as clickable hotspots on the corresponding slide, positioned as a percentage of the page so they survive any resize.
+- **Video pop-up** — a recovered link to a known video host (YouTube, VK) opens in a shared in-page modal instead of navigating away from the deck, per `architecture/007`'s video contract; any other link opens in a new tab like a normal link.
+
 ### Changed (generated presentation site template)
 
 - The thumbnail nav rail had no real up/down paging -- only click-a-thumbnail or scroll. Added actual `Prev`/`Next` buttons plus keyboard support (arrow keys, Page Up/Down, Space).
