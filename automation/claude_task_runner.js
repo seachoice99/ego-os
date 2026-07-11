@@ -6,6 +6,8 @@ const os = require("os");
 const path = require("path");
 const cp = require("child_process");
 
+const { verifyFinalSyncEvidence } = require("./release_sync.js");
+
 const ROOT = path.resolve(__dirname, "..");
 const QUEUE = path.join(ROOT, "tasks", "queue");
 const LOCAL = process.env.LOCALAPPDATA || os.homedir();
@@ -105,9 +107,17 @@ Rules:
 3. Implement the smallest complete solution and add relevant tests.
 4. Move this task file through in_progress, testing, deploying, done; record changed files, tests, commit, deploy, health check, and concise result.
 5. Do not commit secrets, settings, caches, logs, scratch files, generated artifacts, or another agent's work.
-6. Tests must pass. Commit message starts with '${task.id}:'; push main to origin/main.
-7. ${deploy ? "Deploy using DEPLOYMENT.md and require active service plus HTTP 200." : "Do not deploy."}
-8. On any unsafe or incomplete step set status failed with the exact blocker and stop. Never claim success without evidence.
+6. Tests must pass. Every commit you make for this task -- including the final metadata commit in rule 9 -- must start with '${task.id}:'; push main to origin/main after each one.
+7. ${deploy ? "Deploy the implementation commit using DEPLOYMENT.md and require active service plus HTTP 200." : "Do not deploy."}
+8. On any unsafe or incomplete step set status failed (or blocked) with the exact blocker and stop. Never claim success without evidence.
+${deploy ? `9. After the implementation commit is deployed and verified, record that evidence and status "done" in this task file, then make a SEPARATE final commit of just that task-file update and push it to origin/main. This final commit must touch only this task's own YAML file (or another explicitly permitted release-metadata file) -- never re-touch ego_os/, requirements*, templates, static, config, or migrations in it.
+10. Before treating the task as truly finished, reconcile production with that final commit so production is never left behind origin/main (this exact defect happened once before -- see automation/release_sync.js and CHANGELOG.md):
+    a. Confirm production's current checkout HEAD equals the implementation commit you just deployed. If it does not, STOP: do not sync anything, set status failed/blocked with the discrepancy -- production changed out of band.
+    b. Confirm your local HEAD equals origin/main HEAD. If it does not, STOP: something else pushed to origin/main, or your own push did not land.
+    c. List every commit between the implementation commit and origin/main HEAD. If any commit's message does not start with '${task.id}:', STOP: a foreign commit is interleaved; do not fast-forward over unrelated history automatically. Set status failed/blocked and report it.
+    d. Diff the file paths changed between the implementation commit and origin/main HEAD. If that diff is EXCLUSIVELY this task's own YAML file (or another explicitly permitted release-metadata file), sync production with 'git pull --ff-only' and skip restarting the service -- safe, since no application code changed. If the diff touches ego_os/, requirements*, templates, static, config, or a migration, do NOT skip the restart: run the normal deploy procedure (pull, restart, health check) instead.
+    e. Only ever use 'git pull --ff-only' for this reconciliation, on production or anywhere else. Never use 'git reset', force push, or rewrite history.
+    f. Record the outcome in this task's result.final_sync object: {"local_head": ..., "origin_head": ..., "production_head": ..., "restart_performed": true|false}. All three head values must be identical. Only leave status "done" if they match; otherwise set status "failed" with the discrepancy recorded there -- never leave status "done" without this evidence.` : ""}
 
 You are authorized for task-scoped edits, tests, commit, push main, and ${deploy ? "Ego OS deploy" : "no deployment"}. Owner-only exclusions remain hard stops.`;
 }
@@ -131,9 +141,21 @@ function execute(selected, maxTurns, timeoutMinutes) {
   fs.writeFileSync(logFile, (output.stdout || "") + (output.stderr || ""), "utf8");
   const current = load(file);
   const clean = run("git", ["status", "--porcelain"]).stdout.trim() === "";
-  if (output.status === 0 && current.status === "done" && clean) { console.log(`DONE ${task.id}`); return true; }
+  // For an automatic-release task, self-reported status "done" is not
+  // trusted on its own -- production silently drifted one commit behind
+  // origin/main once already (RUNNER-001) despite a clean "done" report.
+  // result.final_sync (see release_sync.js) must independently prove
+  // local/origin/production HEAD actually converged before this counts.
+  const syncCheck = current.release === "automatic" ? verifyFinalSyncEvidence(current) : { ok: true };
+  if (output.status === 0 && current.status === "done" && clean && syncCheck.ok) {
+    console.log(`DONE ${task.id}`); return true;
+  }
   current.status = "failed";
-  current.result = { ...(current.result || {}), runner_error: "Claude did not finish cleanly", log: logFile, finished_at: new Date().toISOString() };
+  current.result = {
+    ...(current.result || {}),
+    runner_error: syncCheck.ok ? "Claude did not finish cleanly" : `final sync verification failed: ${syncCheck.reason}`,
+    log: logFile, finished_at: new Date().toISOString(),
+  };
   save(file, current); console.error(`FAILED ${task.id} — queue stopped`); return false;
 }
 

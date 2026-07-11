@@ -2,6 +2,18 @@
 
 All notable changes to Ego OS are recorded here, newest first. See `IMPLEMENTATION_ROADMAP.md` for the forward-looking plan this changelog reports against.
 
+## [Unreleased] — Autonomous task runner: fix production drift after a task's final metadata commit
+
+### Fixed
+
+- **Production could silently end up one commit behind `origin/main`.** An `automatic`-release task deploys its implementation commit, then records deploy/health-check evidence and pushes that as a *separate* final metadata commit -- which was never itself deployed. Found live after `RUNNER-001`. Manually reconciled production to `origin/main` this time (fast-forward only, no restart, since the only diff was `tasks/queue/RUNNER-001.yaml`); `RUNNER-001`'s own history was not rewritten.
+
+### Added
+
+- **`automation/release_sync.js`** -- pure decision logic (no I/O) for the runner's final-sync protocol: `planFinalSync()` decides whether a task's final metadata commit can be fast-forwarded onto production without a restart (only if the diff is exclusively the task's own YAML / permitted release metadata), requires the normal restart/health-check cycle if application code, `requirements*`, templates, static, config, or a migration changed, and stops the task (`failed`/`blocked`, never a silent skip) if production or origin diverged out of band, or a non-task-prefixed commit is interleaved. `verifyFinalSyncEvidence()` is a hard runner-side guard: an `automatic`-release task can no longer end `status: "done"` unless its own recorded `result.final_sync` proves local/origin/production HEAD actually converged -- not just trusted from Claude's self-report.
+- The runner's generated prompt (`makePrompt` in `claude_task_runner.js`) now spells out this exact reconciliation procedure as rules 9-10 for every future `automatic`-release task.
+- 14 unit tests (`automation/release_sync.test.js`, run via `node --test`): metadata-only diff fast-forwards without restart; application-code/`requirements*`/template/migration diffs require a restart; production or origin divergence stops the task; a foreign interleaved commit stops the task; final-head equality is checked; a task cannot claim `done` with missing or mismatched `result.final_sync` evidence.
+
 ## [Unreleased] — Skills audit trail: fix read-triggered "validated" events
 
 ### Fixed
