@@ -179,18 +179,19 @@ def project_memory(request: Request, project_id: int):
 @app.get("/skills")
 def skills_list(request: Request):
     """Read-only (SR-04): lists every Skill under the Registry, valid or
-    not. Viewing this page is itself the 'last check' -- each valid
-    entry logs a 'validated' Skill audit event. This route never
-    mutates the Registry, installs anything, or executes Skill content."""
+    not. Purely observational -- viewing this page must not itself
+    change the audit trail (a read-only UI mutating state as a side
+    effect of being viewed is exactly the bug this route used to have).
+    'last_check' reflects the last genuine operational validation (a
+    real Skill resolution during task execution, or Registry sync),
+    never a page view. This route never mutates the Registry, installs
+    anything, or executes Skill content."""
     entries = skills.list_skills()
     rows = []
     for entry in entries:
         if "error" in entry:
             rows.append({"id": entry["id"], "version": entry["version"], "error": entry["error"]})
             continue
-        store.log_skill_audit_event(
-            entry["id"], "validated", skill_version=entry["version"], detail="Listed on /skills"
-        )
         last_check = store.get_last_skill_check(entry["id"])
         requirements = entry.get("requirements") or {}
         rows.append({

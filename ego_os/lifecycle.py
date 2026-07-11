@@ -12,7 +12,7 @@ def _elapsed_ms(start: float) -> int:
     return int((time.perf_counter() - start) * 1000)
 
 
-def _resolve_employee_skills(skill_refs):
+def _resolve_employee_skills(skill_refs, task_id=None, specialist_id=None):
     """skill_refs: the employee's roster `skills` list, each
     {"id": ..., "version": ...} (SR-02). Resolves each to its exact,
     locked manifest, failing closed (raising skills.SkillError -- a
@@ -20,8 +20,22 @@ def _resolve_employee_skills(skill_refs):
     is missing, revoked, or tampered, per architecture/012: 'Missing/
     revoked/tampered Skill: fail before provider invocation.' An
     Employee with no skills (every pre-SR-02 Employee) resolves to an
-    empty list and behaves exactly as before."""
-    return [skills.get_exact_version(ref["id"], ref["version"]) for ref in (skill_refs or [])]
+    empty list and behaves exactly as before.
+
+    A successful resolution is genuine operational validation (SR-04
+    quality follow-up) -- the manifest was actually loaded and its
+    entrypoint digest actually checked -- so it logs exactly one
+    'validated' Skill audit event per resolved skill per task. Called
+    once per task run and reused for any QA revision, so a revision
+    never double-logs. This is deliberately *not* triggered by viewing
+    the read-only /skills UI, which must never mutate the audit trail."""
+    resolved = [skills.get_exact_version(ref["id"], ref["version"]) for ref in (skill_refs or [])]
+    for manifest in resolved:
+        store.log_skill_audit_event(
+            manifest["id"], "validated", skill_version=manifest["version"],
+            detail=f"Resolved for task #{task_id}, employee '{specialist_id}'.",
+        )
+    return resolved
 
 
 def _skill_instructions_block(resolved_skills):
@@ -387,7 +401,7 @@ def run(task_id: int, project_id: int, request_text: str):
     # right here, propagating up through worker.process_one as a clean
     # 'failed' task, never reaching a model call.
     try:
-        resolved_skills = _resolve_employee_skills(roster.get("skills", []))
+        resolved_skills = _resolve_employee_skills(roster.get("skills", []), task_id=task_id, specialist_id=specialist_id)
     except skills.SkillError as exc:
         store.log_execution_event(
             task_id, step="skill_resolution", employee_id=specialist_id, employee_version=roster["version"],

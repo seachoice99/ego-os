@@ -506,10 +506,15 @@ def get_skill_audit_events(skill_id=None):
 
 
 def get_last_skill_check(skill_id):
+    """The last genuine operational validation of this Skill -- a real
+    Registry validation or resolution, never a page view and not an
+    attach/detach/resolution_failure bookkeeping event, so 'last check'
+    means what it says."""
     conn = get_connection()
     try:
         return conn.execute(
-            "SELECT * FROM skill_audit_events WHERE skill_id = ? ORDER BY id DESC LIMIT 1", (skill_id,)
+            "SELECT * FROM skill_audit_events WHERE skill_id = ? AND event_type = 'validated' "
+            "ORDER BY id DESC LIMIT 1", (skill_id,)
         ).fetchone()
     finally:
         conn.close()

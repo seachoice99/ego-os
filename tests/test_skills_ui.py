@@ -154,9 +154,13 @@ def test_revoked_skill_is_visible_but_not_executable(app_client, owner_credentia
         skills.resolve_compatible_version("structured_reporting", registry_root=registry_root)
 
 
-# --- audit append ---------------------------------------------------------------
+# --- viewing a read-only page must never mutate the audit trail -----------------
 
-def test_viewing_list_page_appends_validated_audit_event(app_client, owner_credentials, temp_env, monkeypatch):
+def test_viewing_list_page_twice_appends_no_audit_events(app_client, owner_credentials, temp_env, monkeypatch):
+    """The bug this quality follow-up fixes: GET /skills used to log a
+    'validated' event on every page view, so a read-only UI was silently
+    mutating state just by being looked at. Viewing it any number of
+    times must not change the audit trail at all."""
     from ego_os import skills, store
 
     registry_root = temp_env["db_path"].parent / "skill_fixtures"
@@ -164,15 +168,67 @@ def test_viewing_list_page_appends_validated_audit_event(app_client, owner_crede
     monkeypatch.setattr(skills, "REGISTRY_ROOT", registry_root)
 
     before = len(store.get_skill_audit_events("structured_reporting"))
-    app_client.get("/skills", auth=owner_credentials)
+    response_1 = app_client.get("/skills", auth=owner_credentials)
     after_one = len(store.get_skill_audit_events("structured_reporting"))
-    app_client.get("/skills", auth=owner_credentials)
+    response_2 = app_client.get("/skills", auth=owner_credentials)
     after_two = len(store.get_skill_audit_events("structured_reporting"))
 
-    assert after_one == before + 1
-    assert after_two == before + 2
-    latest = store.get_skill_audit_events("structured_reporting")[0]
-    assert latest["event_type"] == "validated"
+    assert response_1.status_code == 200
+    assert response_2.status_code == 200
+    assert after_one == before
+    assert after_two == before
+
+
+def test_viewing_detail_page_twice_appends_no_audit_events(app_client, owner_credentials, temp_env, monkeypatch):
+    from ego_os import skills, store
+
+    registry_root = temp_env["db_path"].parent / "skill_fixtures"
+    _write_skill(registry_root, "structured_reporting", "1.0.0")
+    monkeypatch.setattr(skills, "REGISTRY_ROOT", registry_root)
+
+    before = len(store.get_skill_audit_events("structured_reporting"))
+    app_client.get("/skills/structured_reporting/1.0.0", auth=owner_credentials)
+    app_client.get("/skills/structured_reporting/1.0.0", auth=owner_credentials)
+    after = len(store.get_skill_audit_events("structured_reporting"))
+
+    assert after == before
+
+
+def test_real_skill_resolution_logs_exactly_one_validated_event(
+    app_client, owner_credentials, csrf_headers, fake_model_complete, process_task, temp_env, monkeypatch,
+):
+    """A real operational validation -- a Skill actually resolved (loaded,
+    digest-checked) for a real task -- is exactly what 'validated' should
+    mean, and it fires exactly once per skill per task, not once per QA
+    revision reusing the same already-resolved manifest."""
+    from ego_os import skills, store
+
+    registry_root = temp_env["db_path"].parent / "skill_fixtures"
+    _write_skill(registry_root, "structured_reporting", "1.0.0")
+    monkeypatch.setattr(skills, "REGISTRY_ROOT", registry_root)
+    _attach_skill_to_employee("writer", [{"id": "structured_reporting", "version": "1.0.0"}])
+
+    fake_model_complete.responses["delegation"] = ("writer", 5, 1, 0.00001)
+    fake_model_complete.responses["business_communication"] = ("Done.", 10, 5, 0.00005)
+    fake_model_complete.responses["critique"] = ("PASS", 5, 1, 0.00001)
+
+    before = store.get_skill_audit_events("structured_reporting")
+    response = app_client.post(
+        "/tasks", data={"request_text": "Write a short note", "project_id": 1},
+        auth=owner_credentials, headers=csrf_headers, follow_redirects=False,
+    )
+    task_id = int(response.headers["location"].rsplit("/", 1)[-1])
+    process_task(task_id)
+
+    assert store.get_task(task_id)["run_state"] == "completed"
+    after = store.get_skill_audit_events("structured_reporting")
+    new_events = [e for e in after if e["id"] not in {row["id"] for row in before}]
+    assert len(new_events) == 1
+    assert new_events[0]["event_type"] == "validated"
+    assert new_events[0]["skill_version"] == "1.0.0"
+
+    last_check = store.get_last_skill_check("structured_reporting")
+    assert last_check["id"] == new_events[0]["id"]
 
 
 def test_attach_and_detach_are_logged_via_sync_from_registry(tmp_path, temp_env, monkeypatch):
@@ -212,13 +268,28 @@ def test_attach_and_detach_are_logged_via_sync_from_registry(tmp_path, temp_env,
 
 # --- audit contains no secrets ---------------------------------------------------
 
-def test_audit_trail_never_contains_owner_credentials(app_client, owner_credentials, temp_env, monkeypatch):
+def test_audit_trail_never_contains_owner_credentials(
+    app_client, owner_credentials, csrf_headers, fake_model_complete, process_task, temp_env, monkeypatch,
+):
+    """Audit events now only come from real operational activity (a real
+    Skill resolution, or a real attach/detach), not from viewing a page --
+    so this test has to generate real events the same way, then check
+    none of them leak the Owner password."""
     from ego_os import skills, store
 
     registry_root = temp_env["db_path"].parent / "skill_fixtures"
     _write_skill(registry_root, "structured_reporting", "1.0.0")
     monkeypatch.setattr(skills, "REGISTRY_ROOT", registry_root)
     _attach_skill_to_employee("writer", [{"id": "structured_reporting", "version": "1.0.0"}])
+
+    fake_model_complete.responses["delegation"] = ("writer", 5, 1, 0.00001)
+    fake_model_complete.responses["business_communication"] = ("Done.", 10, 5, 0.00005)
+    fake_model_complete.responses["critique"] = ("PASS", 5, 1, 0.00001)
+    response = app_client.post(
+        "/tasks", data={"request_text": "Write a short note", "project_id": 1},
+        auth=owner_credentials, headers=csrf_headers, follow_redirects=False,
+    )
+    process_task(int(response.headers["location"].rsplit("/", 1)[-1]))
 
     app_client.get("/skills", auth=owner_credentials)
     app_client.get("/skills/structured_reporting/1.0.0", auth=owner_credentials)

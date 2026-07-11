@@ -2,6 +2,16 @@
 
 All notable changes to Ego OS are recorded here, newest first. See `IMPLEMENTATION_ROADMAP.md` for the forward-looking plan this changelog reports against.
 
+## [Unreleased] — Skills audit trail: fix read-triggered "validated" events
+
+### Fixed
+
+- **`GET /skills` no longer logs a `validated` audit event on every page view.** A read-only UI was mutating the audit trail just by being looked at — viewing the page any number of times now appends nothing. `GET /skills/{id}/{version}` was already read-only in this respect and is now covered by a test proving it.
+- **`validated` is now logged only on genuine operational validation**: when `ego_os/lifecycle.py` actually resolves an Employee's Skill reference for a real task (loads the manifest, checks its digest) — once per skill per task, reused (not re-logged) across a QA revision.
+- **`store.get_last_skill_check()`** now considers only `validated` events, so "last check" on the Skills UI reflects the last real validation, not an attach/detach/resolution_failure event or a page view.
+- No existing production audit rows were deleted or rewritten; this only changes what triggers a *new* row going forward.
+- 2 new tests (list/detail page viewed twice appends nothing) and 1 new test (a real task resolution logs exactly one `validated` event, and `get_last_skill_check` reflects it); 1 existing test updated to generate real audit events instead of relying on the removed page-view logging.
+
 ## [Unreleased] — Skills UI and audit (SR-04)
 
 ### Added
