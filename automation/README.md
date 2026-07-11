@@ -40,3 +40,7 @@ An automatic-release task deploys its implementation commit, then records deploy
 5. The result is recorded as `result.final_sync = {local_head, origin_head, production_head, restart_performed}`. The runner itself (not just Claude's self-report) refuses to accept `status: "done"` on an `automatic`-release task unless `release_sync.verifyFinalSyncEvidence()` confirms all three heads actually match -- a task cannot silently end "done" with production left behind.
 
 Run its unit tests with `node --test` (from the repo root) or `node --test automation/release_sync.test.js` directly -- no npm dependency required, matching the runner's own dependency-free design.
+
+## `blocked` as a legitimate, non-failure terminal state
+
+A task can legitimately conclude it must stop for a real Owner decision it has no authority to make itself (e.g. accepting a real Digital Asset Candidate — ADR-0007 never lets an automatic process accept its own nomination). `tasks/queue/README.md`'s state diagram already documents `ready → blocked`. If Claude finishes cleanly (process exit 0, clean working tree) and sets the task's own `status` to `"blocked"`, the runner treats that as success (`return true`, process exit 0) — it does **not** overwrite the status to `"failed"`. This is distinct from the pre-flight `owner_approved` gate at the top of `execute()`, which still treats an unapproved `OWNER_ONLY` risk as a queueing mistake and returns `false`/exit 1, unchanged.

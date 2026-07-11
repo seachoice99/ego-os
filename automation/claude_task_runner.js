@@ -150,6 +150,19 @@ function execute(selected, maxTurns, timeoutMinutes) {
   if (output.status === 0 && current.status === "done" && clean && syncCheck.ok) {
     console.log(`DONE ${task.id}`); return true;
   }
+  // A task can legitimately conclude it must stop for a real Owner decision
+  // it has no authority to make itself (e.g. accepting a real Digital
+  // Asset Candidate) -- tasks/queue/README.md's own state diagram already
+  // documents "ready -> blocked" as a valid terminal state. That is a
+  // correct, expected outcome, not a bug: Claude finished cleanly (clean
+  // working tree, no crash) and explicitly recorded why it stopped, rather
+  // than fabricating a "done" it has no authority to claim. Only recognized
+  // when Claude itself set this after a full run -- the separate pre-flight
+  // owner_approved gate above (line ~129) still treats an unapproved
+  // OWNER_ONLY risk as a queueing mistake and returns false, unchanged.
+  if (output.status === 0 && current.status === "blocked" && clean) {
+    console.log(`BLOCKED ${task.id} — awaiting a real Owner decision (not a failure)`); return true;
+  }
   current.status = "failed";
   current.result = {
     ...(current.result || {}),
