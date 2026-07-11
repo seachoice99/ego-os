@@ -1,0 +1,52 @@
+{
+  "id": "DA-02",
+  "status": "ready",
+  "priority": "P1",
+  "title": "Owner Asset Inbox: list, detail, accept, reject",
+  "prompt": "Depends on DA-01 (digital_assets/digital_asset_events tables and store.transition_asset/create_asset_candidate/get_asset/get_assets/get_asset_events -- read ego_os/store.py's actual DA-01 implementation before writing routes, do not assume field names not actually present). Read architecture/013_DIGITAL_ASSET_MODEL.md and ADR-0007 first. Read ego_os/main.py's /skills and /skills/{id}/{version} routes (SR-04) and ego_os/templates/skills.html / skill_detail.html as the closest precedent for a read-mostly Owner page with an inline <style> block, a .tag chip class, and a back-link -- match that visual style. Also read ego_os/templates/command.html and dashboard.html for the existing Command (decisions) vs Dashboard (observation) split before deciding where to add a navigation link.\n\nAdd to ego_os/main.py (protected automatically by the existing app-wide Depends(require_owner), Depends(verify_csrf) -- no new auth wiring needed):\n\nGET /assets -- lists digital_assets grouped/sortable into: Candidates awaiting decision (status='candidate'), Accepted Assets (status='accepted'), Internally Validated Assets (status='internally_validated'), and Rejected/Archived shown in a visually separate section (status in ('rejected','archived')). Each row shows: title, asset_type, project (resolve project_id to its name), source Task (link to /tasks/{source_task_id}), status, created_at date, and a short value_thesis excerpt.\n\nGET /assets/{id} -- detail page: summary, full provenance (rendered from the JSON provenance blob: source Task link, source Report reference, artifact names/types listed -- link each artifact through the EXISTING /tasks/{task_id}/artifacts/{filename} route, do not invent a new download path or copy any file), employee versions, skills used, value_thesis, monetization_thesis (render as its structured fields per architecture/013 Section 9 if present, otherwise 'not yet validated'), and the full digital_asset_events history in order. Unknown asset id -> 404 (HTTPException, same pattern as /skills/{id}/{version}).\n\nPOST /assets/{id}/accept and POST /assets/{id}/reject -- call store.transition_asset with actor='owner'. Requirements: idempotent-or-clear-error (calling accept twice on an already-accepted asset must either be a safe no-op returning success, or return a clear 4xx error -- pick one behavior and be consistent, prove it with a test, never crash with a raw 500 or silently create a duplicate/confusing event); accepting an already-rejected Candidate must succeed ONLY as a fresh, distinct owner_accepted decision (per DA-01's transition rules) -- do not add any special-case bypass here, just call the same store function DA-01 already built; reject must never delete anything (matches DA-01's append-only/no-hard-delete guarantee); neither route may edit provenance, and neither route performs or triggers any external action (no publishing, no network call, no email -- pure DB state change plus a redirect back to the asset or the inbox). Both routes must escape/never render raw HTML from Owner-adjacent fields unsafely -- rely on Jinja2's default autoescaping exactly as skill_detail.html already does, no `| safe` filter on any asset-derived field.\n\nAdd one navigation link into the existing surface split (Command = decisions, Dashboard = observation): since accept/reject are Owner decisions, add an 'Asset Inbox' link from command.html (near the existing pending-proposals section is a reasonable place, but do not restructure the existing Command page -- just add a link/section). You may also add a lighter observation-only link from dashboard.html if it fits without breaking the split, but the primary link belongs on Command. Do not remove or rename any existing route, link, or section.\n\nTests (tests/test_asset_inbox.py, follow tests/test_skills_ui.py's app_client/owner_credentials/csrf_headers conventions): GET /assets and GET /assets/{id} require Owner auth (401 unauthenticated, matching the exact pattern already used for /skills); POST accept/reject require CSRF headers (matching csrf_headers fixture usage elsewhere); list page shows a real Candidate created via store.create_asset_candidate; detail page renders provenance, evidence, and event history correctly; unknown asset id -> 404; accept transitions a candidate to accepted and logs owner_accepted with actor='owner'; reject transitions a candidate to rejected and logs owner_rejected; accepting an already-internally_validated or already-accepted asset does not silently corrupt state (assert your chosen idempotent-or-error behavior explicitly); a direct attempt to reach internally_validated via these routes without going through DA-01's real validation path is impossible (there is no route in this task that sets validation_status or monetization_thesis -- only DA-04 adds that); double-submitting accept (two POSTs in a row) does not produce two owner_accepted events for a no-op-idempotent design, or produces a clear error on the second one for an error-on-repeat design -- whichever you chose, prove it; HTML in a title/summary/evidence field is escaped in the rendered page, not executed (same style as SR-04's HTML-escaping test); provenance renders the correct source Task link and artifact links without copying or re-serving any file through a new route; existing routes (/, /dashboard, /skills, /employees/{id}, /tasks/{id}) are unaffected; full existing suite (all tests through DA-01) plus these new tests pass.\n\nDeploy normally (this changes ego_os/main.py and templates/ -- always requires a restart, never a metadata-only fast-forward). Confirm HTTP 401/200, service active, final-sync protocol as usual.\n\nAfter deploy, manually (via a real authenticated request to production, not a mock) create exactly one clearly-labeled SAFE TEST Candidate (title containing the literal words 'DA-02 SAFE TEST CANDIDATE', summary explicitly stating it exists only to verify the accept/reject flow and carries no real value) using store.create_asset_candidate against the production DB directly over SSH (same access pattern already used for other production verification in this repository -- do not invent a new backdoor route to create test data), then exercise accept and reject against it through the real production HTTP routes to prove the flow works end to end, then leave it in whatever terminal state the last real test call left it in (do not delete it -- deletion is prohibited by ADR-0007 anyway). Do not create a fake real-looking Asset to satisfy this -- it must be unambiguously and permanently labeled as a test fixture in its own title and summary.",
+  "acceptance": [
+    "GET /assets and GET /assets/{id} implemented, both behind existing Owner Basic Auth + CSRF dependency",
+    "List page shows Candidates, Accepted, Internally Validated, and Rejected/Archived assets in visually distinct groups with title/type/project/source-Task-link/status/created-date/value-thesis-excerpt",
+    "Detail page renders provenance (source Task, source Report reference, artifact links through the existing download route), employee versions, skills used, value thesis, monetization thesis, and full event history",
+    "POST /assets/{id}/accept and POST /assets/{id}/reject work through store.transition_asset with actor='owner', are idempotent-or-clear-error (not a crash, not a silent duplicate), and perform no external action of any kind",
+    "Provenance can never be edited through these routes",
+    "A rejected asset is never deleted",
+    "All asset-derived fields are HTML-escaped in rendered pages (no `| safe` filter used)",
+    "A navigation link to the Asset Inbox exists on the Command page (decisions), not buried only in Dashboard (observation), without breaking the existing Command/Dashboard split",
+    "tests/test_asset_inbox.py covers: auth, CSRF, list/detail rendering, unknown-id 404, accept, reject, invalid/repeat transitions, double-submit behavior, HTML escaping, provenance rendering with correct artifact links, and that all pre-existing routes are unaffected",
+    "Full test suite (all tests through DA-01, plus these new ones) passes",
+    "Production deploy verified: service active, HTTP 401/200, local == origin/main == production HEAD after final sync, working tree clean",
+    "A single, permanently and unambiguously labeled 'DA-02 SAFE TEST CANDIDATE' was created and run through accept/reject on production via the real HTTP routes -- not deleted, not disguised as a real Asset"
+  ],
+  "allowed_paths": [
+    "ego_os/main.py",
+    "ego_os/templates/assets.html",
+    "ego_os/templates/asset_detail.html",
+    "ego_os/templates/command.html",
+    "ego_os/templates/dashboard.html",
+    "tests/test_asset_inbox.py",
+    "tasks/queue/DA-02.yaml",
+    "IMPLEMENTATION_ROADMAP.md",
+    "CHANGELOG.md"
+  ],
+  "forbidden_paths": [
+    "ego_os/store.py",
+    "ego_os/lifecycle.py",
+    "ego_os/worker.py",
+    "ego_os/tools.py",
+    "ego_os/auth.py",
+    "ego_os/skills.py",
+    "architecture/",
+    "memory/decisions/",
+    "company/",
+    "automation/",
+    "tasks/queue/DA-01.yaml",
+    "tasks/queue/DA-03.yaml",
+    "tasks/queue/DA-04.yaml",
+    "tasks/queue/DA-05.yaml"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "automatic",
+  "result": null
+}

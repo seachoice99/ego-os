@@ -1,0 +1,46 @@
+{
+  "id": "DA-05",
+  "status": "ready",
+  "priority": "P1",
+  "title": "Real v0.5 exit criterion: retrospective Candidate analysis and a genuine stop for Owner decision",
+  "prompt": "Depends on DA-01, DA-02, DA-03, DA-04. Read architecture/013_DIGITAL_ASSET_MODEL.md and ADR-0007 first.\n\nThis task's job is analysis and presentation only. It must NEVER accept, reject, or validate any Digital Asset itself, and it must NEVER fabricate a Candidate that is not grounded in real, existing production Tasks/Reports/Artifacts. Do not create a synthetic or staged Task to generate a fake Candidate from -- analyze what genuinely already exists in production.\n\nStep 1 -- read-only analysis. Using safe, read-only queries against the production database (the same SSH/sqlite3 read pattern already used throughout this repository's production verification -- never a raw write outside the app's own functions), review real, already-delivered Tasks, their Reports, and their artifacts. Look for output that genuinely has the properties architecture/013 Section 1 defines: reusable independent of the original request, retains value after the Task closed, has an identifiable audience, has real evidence of quality, has a clear next step, could eventually carry a monetization thesis, required no external transaction to create. Note: DA-03's automatic assessment only runs for Tasks delivered AFTER DA-03 was deployed -- older, already-delivered Tasks from earlier in this repository's history were never automatically assessed, so this retrospective pass may find genuinely reusable output DA-03 never had a chance to see. Do not force a count -- if fewer than three real candidates exist, present fewer; do not pad the list with weak ones to reach three.\n\nStep 2 -- create real Candidate records for what you find (at most three). Write a small, clearly-labeled one-off script (e.g. scripts/da05_retrospective_candidates.py, committed to the repository so this analysis is reproducible and auditable, not a throwaway you run and discard) that: connects to the production database read-only for its analysis phase, and for each genuinely qualifying Task calls the real ego_os.store.create_asset_candidate function (imported and run in the production venv/environment over SSH, exactly as the app itself would call it -- do not hand-craft a raw SQL INSERT that bypasses create_asset_candidate's validation and event logging) with origin='retrospective_v0.5_exit' and a complete, honest evidence/summary/value_thesis built from what is actually true about that Task's real output, not embellished. Before running this script against the real production database, take a production DB backup (SQLite .backup) and confirm PRAGMA integrity_check is 'ok' on it first, exactly like every other production DB write this initiative has made -- this is real, first-time write activity from outside the app's own HTTP routes, treat it with the same care as a migration even though the schema itself is unchanged.\n\nStep 3 -- present, do not decide. For each Candidate actually created, prepare (in this task's own result object, AND ensure it is fully visible through the already-built GET /assets and GET /assets/{id} pages from DA-02 -- do not build any new UI) a clear, honest presentation covering: source (which real Task/Report), the specific value, the evidence, an explicit, honest statement of why this is not just a one-off result, real risks (including reasons it might NOT be as valuable as it looks), and the plausible target audience. Do not oversell. Do not accept any of them.\n\nStep 4 -- stop, correctly. This is the genuine Owner-approval point the whole Digital Asset Awareness capability exists to protect: an automatic process may never accept its own nomination (ADR-0007 decision 2 and 3). After Step 3 is fully recorded, set this task's own status to 'blocked' (NOT 'done' -- do not force a false 'done' by inventing an acceptance decision that is not yours to make) with a result object containing: the full presentation from Step 3 for every Candidate actually created (or a clear statement that zero genuinely qualified, if that is the honest finding), the commit hash of the analysis script + this task file, confirmation that git push landed on origin/main, confirmation that production was updated to that commit (a script-only change with no ego_os/ modification may still trigger a normal deploy per the runner's standard rules -- that is fine and expected, verify service active and HTTP 401/200 as usual regardless), local HEAD == origin/main == production HEAD, and working tree clean. Ending at 'blocked' here, with this evidence, IS successful completion of this task -- it is not an error condition and must not be described as one.\n\nDo not attempt DA-01/02/03/04's full final-sync 'done' choreography (the two-commit dance in rules 9-10 of your standing instructions) for this task specifically -- those rules exist to guarantee a 'done' task's production state matches origin/main; this task intentionally does not end 'done'. Instead: make your implementation commit (the script + supporting doc, if any), push it, deploy it normally per rule 7 (pull, restart if needed, health check), then update and commit this task file's own final 'blocked' status and result as a second commit, push it, and reconcile production with that second commit the same safe way (fast-forward if the diff is metadata-only, a normal restart-cycle deploy if it touches anything else) -- verify the three heads match before concluding, exactly as rule 10 already describes, just without requiring status to read 'done' at the end.",
+  "acceptance": [
+    "No Digital Asset is accepted, rejected, or validated by this task -- it only nominates and presents",
+    "Every Candidate created by this task is grounded in a real, already-existing, already-delivered production Task -- none is fabricated or staged",
+    "At most three Candidates are created; fewer than three is acceptable and expected if fewer genuinely qualify",
+    "scripts/da05_retrospective_candidates.py is committed, uses ego_os.store.create_asset_candidate (not a raw SQL insert bypassing validation/event-logging), and is read-only against production except for that explicit, deliberate write path",
+    "A production DB backup was taken and PRAGMA integrity_check confirmed 'ok' before the script was run against production",
+    "Every created Candidate is fully visible and reviewable through the existing GET /assets and GET /assets/{id} pages with no new UI required",
+    "This task's final status is 'blocked' (not 'done'), with a result object presenting source/value/evidence/why-not-one-off/risks/audience for every created Candidate, or an honest statement that none qualified",
+    "Ending at 'blocked' with this evidence is treated as successful completion of this task, not a failure",
+    "local HEAD == origin/main == production HEAD, working tree clean, service active, HTTP 401/200 confirmed before the task ends"
+  ],
+  "allowed_paths": [
+    "scripts/da05_retrospective_candidates.py",
+    "tasks/queue/DA-05.yaml",
+    "IMPLEMENTATION_ROADMAP.md",
+    "CHANGELOG.md"
+  ],
+  "forbidden_paths": [
+    "ego_os/store.py",
+    "ego_os/lifecycle.py",
+    "ego_os/worker.py",
+    "ego_os/main.py",
+    "ego_os/templates/",
+    "ego_os/auth.py",
+    "ego_os/skills.py",
+    "ego_os/tools.py",
+    "architecture/",
+    "memory/decisions/",
+    "company/",
+    "automation/",
+    "tasks/queue/DA-01.yaml",
+    "tasks/queue/DA-02.yaml",
+    "tasks/queue/DA-03.yaml",
+    "tasks/queue/DA-04.yaml"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "automatic",
+  "result": null
+}
