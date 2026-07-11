@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Ego OS — Asset Inbox</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 { margin-bottom: 0.2rem; }
+    .subtitle { color: #666; margin-top: 0; }
+    section { margin-top: 1.5rem; border: 1px solid #e2e2e2; border-radius: 10px; padding: 1.2rem 1.4rem; background: #fff; }
+    section.rejected-archived { background: #fafafa; border-color: #e5e5e5; }
+    section h2 { margin-top: 0; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+    .tag { display: inline-block; background: #f1f5f9; border-radius: 4px; padding: 0.15rem 0.5rem; margin: 0.1rem; font-size: 0.8rem; }
+    .status-candidate { color: #b45309; font-weight: 600; }
+    .status-accepted { color: #15803d; font-weight: 600; }
+    .status-internally_validated { color: #1d4ed8; font-weight: 600; }
+    .status-rejected, .status-archived { color: #991b1b; }
+    a { color: #1d4ed8; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <p><a href="/">&larr; back to Command</a></p>
+  <h1>Asset Inbox</h1>
+  <p class="subtitle">Digital Assets, grouped by lifecycle status (architecture/013).</p>
+
+  {% macro asset_table(rows) %}
+  {% if rows %}
+  <table>
+    <tr><th>Title</th><th>Type</th><th>Project</th><th>Source Task</th><th>Status</th><th>Created</th><th>Value thesis</th></tr>
+    {% for a in rows %}
+    <tr>
+      <td><a href="/assets/{{ a.id }}">{{ a.title }}</a></td>
+      <td>{{ a.asset_type }}</td>
+      <td>{{ a.project_name }}</td>
+      <td><a href="/tasks/{{ a.source_task_id }}">task {{ a.source_task_id }}</a></td>
+      <td class="status-{{ a.status }}">{{ a.status }}</td>
+      <td>{{ a.created_at }}</td>
+      <td>{{ a.value_thesis_excerpt }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p>None.</p>
+  {% endif %}
+  {% endmacro %}
+
+  <section>
+    <h2>Candidates awaiting decision</h2>
+    {{ asset_table(groups.candidate) }}
+  </section>
+
+  <section>
+    <h2>Accepted Assets</h2>
+    {{ asset_table(groups.accepted) }}
+  </section>
+
+  <section>
+    <h2>Internally Validated Assets</h2>
+    {{ asset_table(groups.internally_validated) }}
+  </section>
+
+  <section class="rejected-archived">
+    <h2>Rejected / Archived</h2>
+    {{ asset_table(groups.rejected_archived) }}
+  </section>
+</body>
+</html>

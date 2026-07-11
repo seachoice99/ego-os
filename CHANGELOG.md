@@ -2,6 +2,20 @@
 
 All notable changes to Ego OS are recorded here, newest first. See `IMPLEMENTATION_ROADMAP.md` for the forward-looking plan this changelog reports against.
 
+## [Unreleased] — Owner Asset Inbox: list, detail, accept, reject (DA-02)
+
+### Added
+
+- **`GET /assets`** (`ego_os/templates/assets.html`) — read-only list of every Digital Asset, grouped into Candidates awaiting decision, Accepted, Internally Validated, and Rejected/Archived (visually separated). Each row shows title, type, resolved project name, a link to the source Task, status, created date, and a value-thesis excerpt.
+- **`GET /assets/{id}`** (`ego_os/templates/asset_detail.html`) — detail page rendering the Asset's full provenance (source Task link, source Report reference, artifact links through the *existing* `/tasks/{task_id}/artifacts/{filename}` route — no new download path, no file copy), employee versions, skills used, value thesis, monetization thesis (structured fields per `architecture/013_DIGITAL_ASSET_MODEL.md` Section 9, or "not yet validated"), and the full append-only `digital_asset_events` history. Unknown id → 404.
+- **`POST /assets/{id}/accept` / `POST /assets/{id}/reject`** — the only mechanism for an Owner decision on a Candidate, calling DA-01's `store.transition_asset(..., actor="owner")` with no bypass and no provenance edit. A transition the lifecycle map disallows (already `accepted`, already `internally_validated`, or a repeated/double-submitted accept) raises `store.DigitalAssetError`, reported here as a clear `400` — never a raw `500`, never a silent duplicate event. Rejecting never deletes the Asset (ADR-0007 decision 7); accepting a previously-rejected Candidate succeeds only as a fresh, distinct `owner_accepted` event, per DA-01's own transition rules. Neither route performs any external action — pure DB state change plus a redirect.
+- **Asset Inbox navigation link** on the Command page (`command.html`, decisions surface) near the pending-proposals section, plus a lighter link on the Dashboard (`dashboard.html`, observation surface) — the existing Command/Dashboard split is unchanged.
+- All Asset-derived fields render through Jinja2's default autoescaping (no `| safe` anywhere), matching SR-04's `skill_detail.html` precedent.
+
+### Verified
+
+- 17 new tests (`tests/test_asset_inbox.py`, 147 total with the existing suite): Owner-auth-required (401) and CSRF-required (403) on the new routes, list/detail rendering against a real Candidate created via `store.create_asset_candidate`, list grouping by status, unknown-id 404, accept/reject logging the correct owner-actor event, accepting an already-accepted or already-`internally_validated` Asset returning a clear `400` without a duplicate event, double-submitting accept producing exactly one `owner_accepted` event, accepting a rejected Candidate as a fresh distinct decision (the original rejection event untouched), provenance left unchanged by accept, HTML-in-title/summary/evidence escaped not executed, provenance artifact links resolving through the existing download route with no new path, and all pre-existing routes (`/`, `/dashboard`, `/skills`, `/employees/{id}`) unaffected.
+
 ## [Unreleased] — Digital Asset domain model: additive persistence, provenance, append-only events (DA-01)
 
 ### Added

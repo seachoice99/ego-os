@@ -1,0 +1,159 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Ego OS — Asset {{ asset.id }}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 { margin-bottom: 0.2rem; }
+    .subtitle { color: #666; margin-top: 0; }
+    section { margin-top: 1.5rem; border: 1px solid #e2e2e2; border-radius: 10px; padding: 1.2rem 1.4rem; background: #fff; }
+    h2 { margin-top: 0; font-size: 1.05rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+    .tag { display: inline-block; background: #f1f5f9; border-radius: 4px; padding: 0.15rem 0.5rem; margin: 0.1rem; font-size: 0.8rem; }
+    .status-candidate { color: #b45309; font-weight: 600; }
+    .status-accepted { color: #15803d; font-weight: 600; }
+    .status-internally_validated { color: #1d4ed8; font-weight: 600; }
+    .status-rejected, .status-archived { color: #991b1b; }
+    .actions { margin-top: 0.8rem; display: flex; gap: 0.5rem; }
+    .btn-accept { background: #16a34a; color: #fff; border: none; border-radius: 6px; padding: 0.5rem 1.2rem; font-size: 1rem; cursor: pointer; }
+    .btn-reject { background: #dc2626; color: #fff; border: none; border-radius: 6px; padding: 0.5rem 1.2rem; font-size: 1rem; cursor: pointer; }
+    a { color: #1d4ed8; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <p><a href="/assets">&larr; back to Asset Inbox</a></p>
+  <h1>{{ asset.title }}</h1>
+  <p class="subtitle">
+    {{ asset.asset_type }} &middot;
+    <span class="status-{{ asset.status }}">{{ asset.status }}</span> &middot;
+    {{ project.name if project else "—" }} &middot;
+    created {{ asset.created_at }}
+  </p>
+
+  <section>
+    <h2>Summary</h2>
+    <p>{{ asset.summary }}</p>
+
+    {% if asset.status in ("candidate", "rejected") %}
+    <div class="actions">
+      <form method="post" action="/assets/{{ asset.id }}/accept">
+        <button type="submit" class="btn-accept">Accept</button>
+      </form>
+      {% if asset.status == "candidate" %}
+      <form method="post" action="/assets/{{ asset.id }}/reject">
+        <button type="submit" class="btn-reject">Reject</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Value thesis</h2>
+    <p>{{ asset.value_thesis or "—" }}</p>
+    <h2>Target audience</h2>
+    <p>{{ asset.target_audience or "—" }}</p>
+    <h2>Reusable value</h2>
+    <p>{{ asset.reusable_value or "—" }}</p>
+    <h2>Evidence</h2>
+    {% if asset.evidence %}
+    <ul>
+      {% for e in asset.evidence %}
+      <li>{{ e }}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p>—</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Monetization thesis</h2>
+    {% if asset.monetization_thesis %}
+    <table>
+      <tr><th>Who</th><td>{{ asset.monetization_thesis.who or "—" }}</td></tr>
+      <tr><th>Value</th><td>{{ asset.monetization_thesis.value or "—" }}</td></tr>
+      <tr><th>Cheapest test</th><td>{{ asset.monetization_thesis.cheapest_test or "—" }}</td></tr>
+      <tr>
+        <th>Assumptions</th>
+        <td>
+          {% for a in (asset.monetization_thesis.assumptions or []) %}<span class="tag">{{ a }}</span>{% else %}&mdash;{% endfor %}
+        </td>
+      </tr>
+      <tr><th>Prohibited</th><td>{{ asset.monetization_thesis.prohibited or "—" }}</td></tr>
+    </table>
+    {% else %}
+    <p>not yet validated</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Provenance</h2>
+    <table>
+      <tr><th>Source Task</th><td><a href="/tasks/{{ asset.source_task_id }}">task {{ asset.source_task_id }}</a></td></tr>
+      <tr><th>Source Report</th><td><a href="/tasks/{{ asset.provenance.report_task_id or asset.source_task_id }}">see Report on source Task</a></td></tr>
+      <tr><th>Model</th><td>{{ asset.provenance.model or "—" }}</td></tr>
+      <tr><th>Provenance recorded</th><td>{{ asset.provenance.created_at or "—" }}</td></tr>
+      <tr>
+        <th>Artifacts</th>
+        <td>
+          {% for artifact in (asset.provenance.artifacts or []) %}
+          <div>
+            <a href="/tasks/{{ artifact.task_id or asset.source_task_id }}/artifacts/{{ artifact.filename }}">{{ artifact.filename }}</a>
+            {% if artifact.type %}<span class="tag">{{ artifact.type }}</span>{% endif %}
+          </div>
+          {% else %}
+          &mdash;
+          {% endfor %}
+        </td>
+      </tr>
+      <tr>
+        <th>Employee versions</th>
+        <td>
+          {% for emp_id, version in (asset.provenance.employee_versions or {}).items() %}
+          <span class="tag"><a href="/employees/{{ emp_id }}">{{ emp_id }}</a>@{{ version }}</span>
+          {% else %}
+          &mdash;
+          {% endfor %}
+        </td>
+      </tr>
+      <tr>
+        <th>Skills used</th>
+        <td>
+          {% for s in (asset.provenance.skills_used or []) %}
+            {% if s is mapping %}
+            <span class="tag"><a href="/skills/{{ s.id }}/{{ s.version }}">{{ s.id }}@{{ s.version }}</a></span>
+            {% else %}
+            <span class="tag">{{ s }}</span>
+            {% endif %}
+          {% else %}
+          &mdash;
+          {% endfor %}
+        </td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Event history</h2>
+    {% if events %}
+    <table>
+      <tr><th>When</th><th>Event</th><th>Actor</th><th>Detail</th></tr>
+      {% for ev in events %}
+      <tr>
+        <td>{{ ev.created_at }}</td>
+        <td>{{ ev.event_type }}</td>
+        <td>{{ ev.actor }}</td>
+        <td>{{ ev.detail or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p>No events recorded yet.</p>
+    {% endif %}
+  </section>
+</body>
+</html>

@@ -329,3 +329,89 @@ def download_artifact(task_id: int, filename: str):
     if not target.is_relative_to(task_dir) or not target.is_file():
         raise HTTPException(status_code=404)
     return FileResponse(target, filename=filename)
+
+
+def _excerpt(text, limit=140):
+    if not text:
+        return ""
+    text = text.strip()
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+@app.get("/assets")
+def assets_list(request: Request):
+    """Owner Asset Inbox (DA-02, architecture/013): read-only list of every
+    Digital Asset, grouped by lifecycle status so Candidates awaiting an
+    Owner decision are never mixed in with settled Assets. Viewing this
+    page never mutates anything."""
+    project_names = {p["id"]: p["name"] for p in store.get_projects()}
+    groups = {"candidate": [], "accepted": [], "internally_validated": [], "rejected_archived": []}
+    for asset in store.get_assets():
+        row = {
+            "id": asset["id"],
+            "title": asset["title"],
+            "asset_type": asset["asset_type"],
+            "project_name": project_names.get(asset["project_id"], "—"),
+            "source_task_id": asset["source_task_id"],
+            "status": asset["status"],
+            "created_at": asset["created_at"],
+            "value_thesis_excerpt": _excerpt(asset["value_thesis"]),
+        }
+        bucket = "rejected_archived" if asset["status"] in ("rejected", "archived") else asset["status"]
+        groups.setdefault(bucket, []).append(row)
+    return templates.TemplateResponse(request, "assets.html", {"groups": groups})
+
+
+@app.get("/assets/{asset_id}")
+def asset_detail(request: Request, asset_id: int):
+    """Owner Asset Inbox detail (DA-02): provenance, evidence, value/
+    monetization thesis, and the full append-only event history for one
+    Digital Asset. Read-only -- never mutates the Asset or its events."""
+    asset = store.get_asset(asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404)
+    project = store.get_project(asset["project_id"]) if asset["project_id"] else None
+    return templates.TemplateResponse(
+        request,
+        "asset_detail.html",
+        {
+            "asset": asset,
+            "project": project,
+            "events": store.get_asset_events(asset_id),
+        },
+    )
+
+
+@app.post("/assets/{asset_id}/accept")
+def accept_asset(asset_id: int):
+    """The only mechanism that moves a Candidate (or a previously-rejected
+    Asset) to `accepted` (architecture/013 Section 10) -- a thin wrapper
+    over the same store.transition_asset enforcement DA-01 already built,
+    with no bypass and no provenance edit. A transition that isn't
+    currently allowed (e.g. the Asset is already `accepted` or already
+    `internally_validated`) raises store.DigitalAssetError, which is
+    reported as a clear 400 here rather than crashing or silently
+    duplicating the decision."""
+    if store.get_asset(asset_id) is None:
+        raise HTTPException(status_code=404)
+    try:
+        store.transition_asset(asset_id, "accepted", "owner_accepted", "owner")
+    except store.DigitalAssetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return RedirectResponse(url=f"/assets/{asset_id}", status_code=303)
+
+
+@app.post("/assets/{asset_id}/reject")
+def reject_asset(asset_id: int):
+    """The only mechanism that moves a Candidate to `rejected`. Never
+    deletes the Asset (ADR-0007 decision 7) -- only appends a fresh
+    owner_rejected event via store.transition_asset. A transition that
+    isn't currently allowed raises store.DigitalAssetError, reported here
+    as a clear 400."""
+    if store.get_asset(asset_id) is None:
+        raise HTTPException(status_code=404)
+    try:
+        store.transition_asset(asset_id, "rejected", "owner_rejected", "owner")
+    except store.DigitalAssetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return RedirectResponse(url=f"/assets/{asset_id}", status_code=303)
