@@ -1,6 +1,6 @@
 {
   "id": "TOKEN-EFFICIENCY-VERIFY",
-  "status": "ready",
+  "status": "waiting_for_limit",
   "priority": "P0",
   "title": "Real-runner verification of TOKEN-EFFICIENCY-001's staged execution machinery",
   "prompt": "This is a small, safe documentation-only task whose purpose is to prove TOKEN-EFFICIENCY-001 (see CHANGELOG.md's entry and automation/README.md's 'TOKEN-EFFICIENCY-001: staged execution' section) actually works against a real Claude Code session, not just the fake-executable test suite.\n\nDo exactly this:\n1. Create automation/TOKEN_EFFICIENCY_VERIFICATION.md documenting, in a few short paragraphs: what TOKEN-EFFICIENCY-001 changed (staged execution, handoff protocol, waiting_for_limit, killProcessTree) and why (measured real usage: RUNNER-002 used 46 turns/3.1M cache-read tokens, DA-02 used 86 turns/9.3M cache-read tokens, DA-03 burned 55 turns/4.2M cache-read tokens without finishing -- cite these real numbers, don't invent new ones). Include the literal marker 'TOKEN_EFFICIENCY_VERIFIED' somewhere in the file.\n2. Read the file back from disk and confirm the marker is present before doing anything else.\n3. Touch no other file besides this one and this task's own YAML (tasks/queue/TOKEN-EFFICIENCY-VERIFY.yaml). Do not touch ego_os/, tests/, architecture/, memory/decisions/, company/, automation/claude_task_runner.js, automation/session_manager.js, automation/release_sync.js, automation/README.md, or any test file.\n4. Run the existing test suites (both `node --test` from the repo root, and the Python `pytest` suite) and confirm both still pass -- this task changes no code, so this is a sanity check, not a requirement to add new tests.\n5. Commit the implementation (message starting 'TOKEN-EFFICIENCY-VERIFY:'), push to origin/main. This task's release is no_deploy -- do not deploy, do not touch production.\n6. Record status 'done' in this task file's result object with a summary and the commit hash, then make a SEPARATE final metadata commit (also prefixed 'TOKEN-EFFICIENCY-VERIFY:') containing only this task's own YAML update, and push it too.\n7. Before finishing, verify and be prepared to report: local HEAD == origin/main HEAD, working tree clean.",
@@ -39,5 +39,35 @@
   "owner_approved": false,
   "release": "no_deploy",
   "max_duration_minutes": 20,
-  "result": null
+  "result": {
+    "sessions": [
+      {
+        "stage": 1,
+        "model": "default",
+        "started_at": "2026-07-11T12:30:34.763Z",
+        "duration_ms": 151235,
+        "prompt_chars": 6457,
+        "prompt_approx_tokens": 1615,
+        "handoff_words": null,
+        "outcome": "rate_limited",
+        "log": "C:\\Users\\user\\AppData\\Local\\EgoOS\\claude-runner\\logs\\2026-07-11T12-30-34-763Z-TOKEN-EFFICIENCY-VERIFY-stage1.log"
+      }
+    ],
+    "summary": "Created automation/TOKEN_EFFICIENCY_VERIFICATION.md documenting TOKEN-EFFICIENCY-001's staged execution, handoff protocol, waiting_for_limit, and killProcessTree, citing the real measured numbers (RUNNER-002: 46 turns / 3.1M cache-read tokens; DA-02: 86 turns / 9.3M cache-read tokens; DA-03: 55 turns / 4.2M cache-read tokens, unfinished). Read the file back from disk and confirmed the literal marker TOKEN_EFFICIENCY_VERIFIED is present. No other file touched. node --test: 56/56 passed. Python pytest: 147 passed, 5 warnings. No deploy attempted (release: no_deploy).",
+    "changed_files": [
+      "automation/TOKEN_EFFICIENCY_VERIFICATION.md"
+    ],
+    "tests": {
+      "node": "56 passed, 0 failed (node --test, repo root)",
+      "pytest": "147 passed, 5 warnings"
+    },
+    "implementation_commit": "98830dd",
+    "status_check": "local HEAD == origin/main HEAD (98830dd) at time of this update; working tree clean apart from this YAML",
+    "retry_after": "2026-07-11T17:33:06.048Z",
+    "rate_limit": {
+      "source": "text_pattern",
+      "matched": "usage limit reached"
+    }
+  },
+  "started_at": "2026-07-11T12:30:34.618Z"
 }
