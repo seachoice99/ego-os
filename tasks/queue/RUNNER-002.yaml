@@ -1,6 +1,6 @@
 {
   "id": "RUNNER-002",
-  "status": "deploying",
+  "status": "done",
   "priority": "P1",
   "title": "Documentation task validating the fixed runner final-sync protocol",
   "prompt": "This is a second small, safe runner-plumbing task. Its purpose is to validate, through a real run, the final-sync protocol fix in automation/release_sync.js and rules 9-10 of your own generated instructions -- added specifically because RUNNER-001 left production one commit behind origin/main (its final metadata commit was pushed but never itself deployed).\n\nDo exactly this:\n1. Create automation/RUNNER_PROTOCOL_HISTORY.md documenting, in a few short paragraphs: what happened with RUNNER-001 (production ended up one commit behind origin/main because the final task-status metadata commit was never itself deployed), and how automation/release_sync.js's planFinalSync/verifyFinalSyncEvidence fix it (metadata-only diffs fast-forward without a restart; application-code diffs require the normal restart cycle; divergence stops the task instead of forcing a sync). Include the literal marker 'RUNNER_PROTOCOL_FIX_VALIDATED' somewhere in the file.\n2. Read the file back from disk and confirm the marker is present before doing anything else.\n3. Touch no other file besides this one and this task's own YAML (tasks/queue/RUNNER-002.yaml). Do not touch ego_os/, tests/, architecture/, memory/decisions/, company/, automation/claude_task_runner.js, automation/release_sync.js, automation/release_sync.test.js, automation/README.md, or any other tasks/queue/*.yaml.\n4. Run the existing pytest suite and confirm it still passes.\n5. Commit the implementation (message starting 'RUNNER-002:'), push, deploy to production per DEPLOYMENT.md (pull + restart ego-os.service), confirm the service is active and an unauthenticated request returns 401 while an authenticated one returns 200.\n6. Record that evidence and status 'done' in this task file's result object, then follow rules 9 and 10 of your instructions exactly: make a SEPARATE final metadata commit (message also starting 'RUNNER-002:') containing only this task's own YAML update, push it to origin/main, then reconcile production with it using the final-sync protocol. Since the only thing that changes in that final commit is this task's own YAML, this must resolve to a fast-forward-only sync onto production with NO restart -- if your own diff check finds anything else changed in that range, stop instead of forcing it. Record result.final_sync = {local_head, origin_head, production_head, restart_performed: false} with all three heads identical.\n7. Before finishing, verify and be prepared to report: local HEAD == origin/main == production HEAD, working tree clean, service active, HTTP 401 unauthenticated / 200 authenticated.",
@@ -51,7 +51,13 @@
       "automation/RUNNER_PROTOCOL_HISTORY.md",
       "tasks/queue/RUNNER-002.yaml"
     ],
-    "deployed_at": "2026-07-11T07:15:19Z"
+    "deployed_at": "2026-07-11T07:15:19Z",
+    "final_sync": {
+      "local_head": "451520a58116a8b3cb284cd2cca68228633009d3",
+      "origin_head": "451520a58116a8b3cb284cd2cca68228633009d3",
+      "production_head": "451520a58116a8b3cb284cd2cca68228633009d3",
+      "restart_performed": false
+    }
   },
   "started_at": "2026-07-11T07:13:08.279Z"
 }
