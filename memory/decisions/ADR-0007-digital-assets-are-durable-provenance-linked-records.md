@@ -1,0 +1,37 @@
+# ADR-0007: Digital Assets are durable, provenance-linked company records
+
+## Status
+
+Accepted
+
+## Context
+
+`architecture/006_AUTONOMOUS_COMPANY_ARCHITECTURE.md` already defines Stage 2 (Digital Asset Creation) and a Digital Asset Lifecycle (Conception → Creation → Internal Validation → Candidate or Shelved → Monetization Testing → Scaling → Maintenance → Retirement), and `IMPLEMENTATION_ROADMAP.md`'s v0.5 names "Digital Asset Awareness" as the next capability: a task output judged worth keeping should be recorded as a Digital Asset with an explicit thesis, independent of the Task that produced it.
+
+Until now, everything the company produces lives only as a `Task` and its `Report` (`architecture/002_TASK_LIFECYCLE.md`, `architecture/003_REPORTING_AND_LOGS.md`). A Task is a unit of work with a beginning and an end; a Report closes it out. Neither is designed to represent something that continues to have value *after* the Task that created it is finished, that might be reused by a different Task later, or that could eventually be tested for monetization independent of whatever request originally produced it. Without a distinct record, valuable output is indistinguishable from disposable output the moment its Task is delivered — nothing in the system currently distinguishes "a one-off answer" from "a reusable document that just earned real internal value."
+
+This ADR does not introduce monetization, capital, or any external action. It only decides how the company recognizes and durably records that something it built might be worth keeping — the Conception/Creation/Internal Validation portion of the Digital Asset Lifecycle already specified in `architecture/006`, made concrete as a domain model and a database record for the first time.
+
+## Decision
+
+1. **Candidate and Asset are different states, not different entities.** A `Digital Asset Candidate` and an `Accepted Digital Asset` are the same underlying record (`digital_assets`) at different points in one lifecycle, not two separate tables or two separate concepts. This mirrors how `architecture/006` already describes "Candidate or Shelved" as an outcome of Internal Validation applied to one asset, not a promotion into a new kind of object.
+
+2. **The automatic system may nominate a Candidate; it may never accept one.** After a Task is successfully delivered, an automatic, bounded assessment (see `architecture/013_DIGITAL_ASSET_MODEL.md` and task DA-03) may create a `digital_asset` row in `candidate` status. This is nomination, not acceptance — it carries no authority beyond "the company noticed something and is proposing it to the Owner," consistent with `docs/000_VISION_2.md`'s framing of the Owner as the one who "decides whether to trust the company with the next stage," never the company deciding for itself.
+
+3. **Owner decision is the only path from `candidate` to `accepted`.** A recorded `owner_accepted` event, produced by an explicit Owner action, is the sole mechanism that moves a Candidate into an Accepted Asset. There is no automatic acceptance, no default acceptance on timeout, and no acceptance inferred from the Owner simply not rejecting something. This is the same principle already accepted for Stage transitions in `architecture/006` Section 1 ("The company can recommend that it is ready for the next stage... but it cannot promote itself") applied at the level of one asset instead of the whole company.
+
+4. **An Accepted Asset exists independently of its source Task, but never loses its provenance.** Once accepted, a Digital Asset is a first-class company record — it can be referenced, validated, and eventually (in a later stage) tested for monetization without needing its originating Task to still be "open" or relevant. But independence from the Task's *lifecycle* is not independence from the Task's *history*: every Asset permanently records which Task, which Report, which Employee versions, which Skills, and which artifacts it came from. Provenance is written once, at Candidate creation, and is never edited afterward — it is a historical fact about how the Asset came to exist, not a live-updated pointer.
+
+5. **Internal validation and a monetization thesis are evidence, not authorization.** An Asset reaching `internally_validated` status, or having a specific, well-formed monetization thesis attached, changes nothing about what the system is allowed to do externally. `architecture/006` Section 2 (Gate Control) already prohibits "any external transaction... any real financial exposure... any binding agreement" during Stage 2 regardless of how convincing an asset's internal evidence looks — this ADR does not relax that. A monetization thesis is a hypothesis about what *could* be tested later, at Stage 3, under separately-approved Gate Control rules; it is never itself a green light to act.
+
+6. **Digital Asset history is append-only.** Every state transition (`candidate_created`, `owner_accepted`, `owner_rejected`, `validation_started`, `validation_passed`, `validation_failed`, `thesis_updated`, `archived`) is recorded as an immutable event, never overwritten or deleted, mirroring the same append-only discipline already established for `execution_events` (v0.4.1) and `skill_audit_events` (Skills and Capability Management initiative). An Asset's current `status` is a derived, queryable convenience field, not the only record of what happened — the event history remains the source of truth for how it got there, matching `architecture/006` Section 4's requirement that a shelved or retired asset's "record and the reason it failed remain."
+
+7. **Hard delete is prohibited for the MVP.** A rejected or archived Asset is never removed from the database, and no route or worker path may delete a `digital_assets` row or a `digital_asset_events` row. This matches the existing repository-wide constraint that generated artifacts and historical Task/Report/Memory records are never rewritten or removed (`CLAUDE.md`, `IMPLEMENTATION_ROADMAP.md` v0.4.1's cost/version-traceability guarantees). A future ADR may introduce a distinct, explicitly Owner-approved archival/deletion policy; this one does not.
+
+## Consequences
+
+- `digital_assets` and `digital_asset_events` are new, additive tables — no existing `tasks`, `reports`, `memory`, or `execution_events` schema changes, and no existing row is ever rewritten by this work.
+- The Owner gains a new decision surface (an Asset Inbox) distinct from Task submission and Task delivery — reviewing and accepting/rejecting Candidates is a Command-style decision, not a Dashboard-style observation, per the existing Command/Dashboard split (`IMPLEMENTATION_ROADMAP.md` v0.3).
+- Automatic Candidate nomination adds one bounded, non-blocking assessment step after Task Delivery; a failure in that assessment must never turn a successfully delivered Task into a failed one, and must never run more than once per Task.
+- No monetization mechanism (Capital Ledger, Decision Engine, Experiment Engine, Stage 3 Gate Control rules) is built against a hypothetical Asset. Per `IMPLEMENTATION_ROADMAP.md`'s v0.5 exit criteria, those are scoped later, only once a real, Owner-accepted, internally-validated Asset with a concrete monetization thesis actually exists.
+- This ADR does not reverse or edit ADR-0001 through ADR-0006; it is additive, applying the already-accepted Stage 2 / Digital Asset Lifecycle architecture from `architecture/006` for the first time as a concrete implementation.
