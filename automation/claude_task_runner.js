@@ -20,6 +20,11 @@ const {
   decideNextAction,
   claudeInvocationArgs,
 } = require("./session_manager.js");
+const {
+  commandAllowedInState,
+  nextRunnerState,
+  buildEvent,
+} = require("./runner_control.js");
 
 // Overridable so tests can run preflight()'s real (but read-only) git
 // checks against an isolated throwaway repo instead of depending on this
@@ -32,6 +37,14 @@ const LOCAL = process.env.EGO_OS_RUNNER_LOCAL_DIR || process.env.LOCALAPPDATA ||
 const LOCK = path.join(LOCAL, "ego-os-claude-runner.lock");
 const LOG_DIR = path.join(LOCAL, "EgoOS", "claude-runner", "logs");
 const HANDOFF_DIR = path.join(LOCAL, "EgoOS", "claude-runner", "handoffs");
+// RUNNER-CONTROL-UI: the shared, file-based protocol between this engine
+// and control_server.js -- deliberately not a socket/IPC channel so a
+// control server that starts after the runner (or is restarted) can still
+// read/write the same state without any live connection.
+const CONTROL_DIR = path.join(LOCAL, "EgoOS", "claude-runner", "control");
+const COMMANDS_FILE = path.join(CONTROL_DIR, "commands.json");
+const RUNNER_STATE_FILE = path.join(CONTROL_DIR, "runner_state.json");
+const EVENTS_FILE = path.join(CONTROL_DIR, "events.ndjson");
 // Overridable so tests can point the runner at a fake/mock executable
 // instead of ever spawning a real Claude Code process.
 const CLAUDE = process.env.EGO_OS_RUNNER_CLAUDE_PATH || path.join(process.env.APPDATA || "", "npm", "claude.cmd");
@@ -110,10 +123,14 @@ function killProcessTree(pid) {
 // original DA-01 defect, just via a different race. Owning the kill
 // ourselves, on a live process tree, before anything else touches it,
 // closes that race: the timer below fires while the tree is still alive.
-function runClaude(promptText, args, timeoutMs) {
+// opts.pollEmergencyStop, if given, is polled on an interval (never any
+// other command -- pause/stop_after_stage NEVER interrupt an in-flight
+// session, only emergency_stop may) so a genuinely dangerous command can
+// still act while a session is running, not just between stages.
+function runClaude(promptText, args, timeoutMs, opts = {}) {
   return new Promise((resolve) => {
     const child = cp.spawn(CLAUDE, args, { cwd: ROOT, shell: true, windowsHide: true });
-    let stdout = "", stderr = "", timedOut = false, settled = false;
+    let stdout = "", stderr = "", timedOut = false, interrupted = false, settled = false;
     if (child.stdout) child.stdout.on("data", (d) => { stdout += d.toString(); });
     if (child.stderr) child.stderr.on("data", (d) => { stderr += d.toString(); });
 
@@ -122,10 +139,20 @@ function runClaude(promptText, args, timeoutMs) {
       killProcessTree(child.pid);
     }, timeoutMs);
 
+    const emergencyPoll = opts.pollEmergencyStop
+      ? setInterval(() => {
+          if (!settled && opts.pollEmergencyStop()) {
+            interrupted = true;
+            killProcessTree(child.pid);
+          }
+        }, opts.pollIntervalMs || 2000)
+      : null;
+
     function finish(result) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (emergencyPoll) clearInterval(emergencyPoll);
       resolve(result);
     }
 
@@ -139,7 +166,7 @@ function runClaude(promptText, args, timeoutMs) {
       // Agent-tool subagent) is still alive, exactly the shape of the
       // original DA-01 orphan.
       killProcessTree(child.pid);
-      finish({ status, signal: timedOut ? (signal || "SIGTERM") : signal, stdout, stderr, pid: child.pid });
+      finish({ status, signal: (timedOut || interrupted) ? (signal || "SIGTERM") : signal, stdout, stderr, pid: child.pid, interrupted });
     });
 
     if (child.stdin) {
@@ -160,6 +187,54 @@ function load(file) {
 
 function save(file, task) {
   fs.writeFileSync(file, JSON.stringify(task, null, 2) + "\n", "utf8");
+}
+
+// --- RUNNER-CONTROL-UI: file-based control protocol ------------------------
+// A pending command is a single JSON object at COMMANDS_FILE -- the control
+// server writes it, the engine reads and clears it at a genuinely safe
+// point (never mid-runClaude(), except emergency_stop's own poll below).
+// This is deliberately NOT a queue of commands: only the latest instruction
+// matters, and there is exactly one runner per workspace by design (the
+// existing lock file already enforces that).
+function readPendingCommand() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(COMMANDS_FILE, "utf8"));
+    return parsed && typeof parsed.command === "string" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearPendingCommand() {
+  try { fs.unlinkSync(COMMANDS_FILE); } catch { /* already absent */ }
+}
+
+function appendEvent(event) {
+  fs.mkdirSync(CONTROL_DIR, { recursive: true });
+  fs.appendFileSync(EVENTS_FILE, JSON.stringify(event) + "\n", "utf8");
+}
+
+function writeRunnerState(state, extra = {}) {
+  fs.mkdirSync(CONTROL_DIR, { recursive: true });
+  const payload = { state, updated_at: new Date().toISOString(), pid: process.pid, ...extra };
+  fs.writeFileSync(RUNNER_STATE_FILE, JSON.stringify(payload, null, 2), "utf8");
+}
+
+// The single in-process source of truth for "what is the runner doing" --
+// every transition goes through here so the append-only event log and the
+// live state snapshot can never drift apart. Returns false (a silent
+// no-op) for an event that has no transition from the current state --
+// e.g. a stray duplicate command -- rather than throwing, since this is
+// read by an external, independently-timed control server.
+let runnerState = "stopped";
+function transition(event, { reason, taskId, sessionId } = {}) {
+  const result = nextRunnerState(runnerState, event);
+  if (!result.ok) return false;
+  const previousState = runnerState;
+  runnerState = result.state;
+  appendEvent(buildEvent({ event, previousState, newState: runnerState, reason, taskId, sessionId }));
+  writeRunnerState(runnerState, { current_task_id: taskId || null, reason: reason || null });
+  return true;
 }
 
 // The runner's own post-session bookkeeping (sessions[], retry_after,
@@ -239,6 +314,12 @@ function nextTask() {
     if (x.task.status === "waiting_for_limit") {
       return isRetryDue(x.task.result && x.task.result.retry_after, now);
     }
+    // A task left "checkpointing" by a pause/stop_after_stage command
+    // between stages resumes exactly where it left off (its sessions[]
+    // already reflects every completed stage) -- unlike waiting_for_auth,
+    // which requires an explicit human "retry", this one is safe to just
+    // pick back up: the human's own resume command already authorized it.
+    if (x.task.status === "checkpointing") return true;
     return false;
   });
   tasks.sort((a, b) => (rank[a.task.priority] ?? 99) - (rank[b.task.priority] ?? 99) || a.file.localeCompare(b.file));
@@ -343,6 +424,39 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
   fs.mkdirSync(HANDOFF_DIR, { recursive: true });
 
   while (stageIndex < maxStages) {
+    // Safe point: between stages. pause/stop_after_stage never interrupt a
+    // session already in flight -- they only ever prevent the NEXT one from
+    // starting. The task is left exactly where it is (its sessions[] array
+    // already reflects every completed stage), so resuming later re-enters
+    // this same loop at the same stageIndex -- identical to how
+    // waiting_for_limit already resumes.
+    // Not gated on commandAllowedInState here: whether a command was sane
+    // to ISSUE was already validated once, by whoever wrote it (in
+    // production, control_server.js checks that before writing); a stage
+    // boundary is simply where the engine consumes whatever is currently
+    // pending, matching the equally unconditional emergency_stop poll in
+    // runClaude() above.
+    const pendingBetweenStages = readPendingCommand();
+    if (pendingBetweenStages && (pendingBetweenStages.command === "pause" || pendingBetweenStages.command === "stop_after_stage")) {
+      const current = load(file);
+      current.status = "checkpointing";
+      current.result = { ...(current.result || {}), sessions, paused_before_stage: stageIndex + 1 };
+      save(file, current);
+      const commitResult = commitRunnerState(file, task.id, `${pendingBetweenStages.command} before stage ${stageIndex + 1}`);
+      if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s checkpointing state: ${commitResult.reason}`);
+      if (pendingBetweenStages.command === "pause") {
+        clearPendingCommand();
+        transition("pause_command", { reason: `paused before stage ${stageIndex + 1}`, taskId: task.id });
+        transition("safe_point_reached", { reason: "no session in flight", taskId: task.id });
+      } else {
+        clearPendingCommand();
+        transition("stop_after_stage_command", { reason: `stopping after stage ${stageIndex} completed`, taskId: task.id });
+        transition("safe_point_reached", { reason: "no session in flight", taskId: task.id });
+      }
+      console.log(`${pendingBetweenStages.command.toUpperCase()} ${task.id} -- stopped before stage ${stageIndex + 1}, resumable from here`);
+      return true; // an intentional, safe stop -- not a failure
+    }
+
     const stageDef = declaredStages ? declaredStages[stageIndex] : null;
     const handoffBefore = readHandoff(task.id);
     const gitState = gitStateBlockNow();
@@ -355,9 +469,39 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
     const logFile = path.join(LOG_DIR, `${stamp}-${task.id}-stage${stageIndex + 1}.log`);
     const stageStart = Date.now();
     const invocationArgs = claudeInvocationArgs({ maxTurns: cliMaxTurns, model });
-    const output = await runClaude(prompt, invocationArgs, stageDurationMinutes * 60000);
+    const output = await runClaude(prompt, invocationArgs, stageDurationMinutes * 60000, {
+      pollEmergencyStop: () => {
+        const pending = readPendingCommand();
+        return Boolean(pending && pending.command === "emergency_stop");
+      },
+    });
     const durationMs = Date.now() - stageStart;
     fs.writeFileSync(logFile, (output.stdout || "") + (output.stderr || ""), "utf8");
+
+    if (output.interrupted) {
+      // Emergency stop is the ONE command allowed to act mid-session. Per
+      // spec: never delete files, never reset/checkout, mark the task
+      // "interrupted" (not failed, not done), save diagnostics, and require
+      // a recovery check on the next start -- handled by nextTask() simply
+      // never selecting an "interrupted" task automatically.
+      clearPendingCommand();
+      const interruptedTask = load(file);
+      interruptedTask.status = "interrupted";
+      interruptedTask.result = {
+        ...(interruptedTask.result || {}),
+        sessions,
+        runner_error: "emergency stop requested during a running session",
+        interrupted_at: new Date().toISOString(),
+        requires_recovery_check: true,
+        log: logFile,
+      };
+      save(file, interruptedTask);
+      const commitResult = commitRunnerState(file, task.id, "interrupted (emergency stop)");
+      if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s interrupted state: ${commitResult.reason}`);
+      transition("emergency_stop_command", { reason: "emergency stop during a running stage", taskId: task.id });
+      console.error(`INTERRUPTED ${task.id} -- emergency stop requested mid-session; recovery check required before this task runs again`);
+      return false;
+    }
 
     const outcome = classifySessionOutcome(output);
     const handoffAfter = readHandoff(task.id);
@@ -474,13 +618,62 @@ async function main() {
   const interval = value("--interval", 60), maxTurns = value("--max-turns", 80), timeout = value("--timeout-minutes", 90);
   try { fs.writeFileSync(LOCK, JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }), { flag: "wx" }); }
   catch { console.error(`STOP: runner lock exists: ${LOCK}`); return 1; }
+  transition("start", { reason: dry ? "dry-run preview" : watch ? "watch mode" : "single-shot" });
   try {
     while (true) {
+      // Blocks here regardless of WHERE the pause was actioned -- between
+      // tasks (below) or between stages inside execute() -- so a paused
+      // runner never looks for a next task while paused.
+      while (runnerState === "paused") {
+        await sleep(2000);
+        const pendingWhilePaused = readPendingCommand();
+        if (pendingWhilePaused && pendingWhilePaused.command === "resume") {
+          clearPendingCommand();
+          transition("resume_command", { reason: "resume requested" });
+        } else if (pendingWhilePaused && pendingWhilePaused.command === "emergency_stop") {
+          clearPendingCommand();
+          transition("emergency_stop_command", { reason: "emergency stop while paused" });
+          return 0;
+        }
+      }
+      if (runnerState === "stopped") return 0; // finalized by a stop_after_stage/emergency_stop already actioned
+
+      // Safe point: between tasks. The only place a command is honored
+      // when nothing is currently running.
+      const pending = readPendingCommand();
+      if (pending && commandAllowedInState(pending.command, runnerState)) {
+        if (pending.command === "emergency_stop") {
+          clearPendingCommand();
+          transition("emergency_stop_command", { reason: "emergency stop requested between tasks" });
+          return 0;
+        }
+        if (pending.command === "stop_after_stage") {
+          clearPendingCommand();
+          transition("stop_after_stage_command", { reason: "stop requested between tasks" });
+          transition("safe_point_reached", { reason: "no task in flight" });
+          return 0;
+        }
+        if (pending.command === "pause") {
+          clearPendingCommand();
+          transition("pause_command", { reason: "pause requested between tasks" });
+          transition("safe_point_reached", { reason: "no task in flight" });
+          continue; // loops back to the paused-wait block above
+        }
+      }
+
       const selected = nextTask();
-      if (!selected) { if (!watch) { console.log("No ready tasks."); return 0; } await sleep(interval * 1000); continue; }
+      if (!selected) {
+        transition("no_ready_tasks");
+        if (!watch) { console.log("No ready tasks."); transition("queue_exhausted", { reason: "no ready tasks, single-shot mode" }); return 0; }
+        await sleep(interval * 1000);
+        continue;
+      }
       if (dry) { console.log(`NEXT ${selected.task.id}: ${selected.task.title}`); return 0; }
-      if (!(await execute(selected, maxTurns, timeout))) return 1;
-      if (!watch) return 0;
+      transition("task_claimed", { taskId: selected.task.id });
+      const ok = await execute(selected, maxTurns, timeout);
+      if (!ok) { transition("task_failed", { taskId: selected.task.id, reason: "execute() returned false -- see the task's own result.runner_error" }); return 1; }
+      transition("safe_point_reached_idle", { taskId: selected.task.id }); // a no-op if execute() already moved us to paused/stopped internally
+      if (!watch) { transition("queue_exhausted", { reason: "single-shot mode, one task processed" }); return 0; }
     }
   } finally { if (fs.existsSync(LOCK)) fs.unlinkSync(LOCK); }
 }
@@ -488,7 +681,10 @@ async function main() {
 module.exports = {
   run, runClaude, killProcessTree, load, save, preflight, nextTask, execute, main,
   buildStagePrompt, gitStateBlockNow, handoffPathFor, readHandoff, commitRunnerState,
+  readPendingCommand, clearPendingCommand, appendEvent, writeRunnerState, transition,
+  getRunnerState: () => runnerState,
   CLAUDE, LOCK, LOG_DIR, HANDOFF_DIR, QUEUE, ROOT,
+  CONTROL_DIR, COMMANDS_FILE, RUNNER_STATE_FILE, EVENTS_FILE,
 };
 
 if (require.main === module) {

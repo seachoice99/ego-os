@@ -402,6 +402,122 @@ test("execute() refuses a 'done' status when the real process output contains th
   fs.rmSync(localDir, { recursive: true, force: true });
 });
 
+// --- 12. RUNNER-CONTROL-UI: pause never interrupts an in-flight session ---
+// pause/stop_after_stage are only ever checked BETWEEN stages -- never
+// polled during runClaude() itself, unlike emergency_stop. This proves it
+// end to end: a "pause" command written WHILE a stage is genuinely running
+// must not cut it short; the stage must still run to its own natural
+// timeout, and only THEN does the task park before the next stage.
+
+function writeControlCommand(runner, command) {
+  fs.mkdirSync(path.dirname(runner.COMMANDS_FILE), { recursive: true });
+  fs.writeFileSync(runner.COMMANDS_FILE, JSON.stringify({ command, requested_at: new Date().toISOString() }), "utf8");
+}
+
+test("a pause command written mid-session does not interrupt the running stage -- it only blocks the NEXT one", async () => {
+  const { runner, localDir } = freshRunnerEnv();
+  const taskDir = path.join(runner.ROOT, "tasks", "queue");
+  fs.mkdirSync(taskDir, { recursive: true });
+  const selected = writeTask(taskDir, { id: "TEST-PAUSE-MIDSTAGE", max_duration_minutes: 0.03, max_auto_stages: 2 });
+  runner.run("git", ["add", "--", path.relative(runner.ROOT, selected.file)]);
+  runner.run("git", ["commit", "-m", "Queue TEST-PAUSE-MIDSTAGE"]);
+  runner.run("git", ["push", "origin", "main"]);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-task-"));
+  const markerFile = path.join(dir, "marker");
+  // hang_once_then_done: stage 1 hangs (leaving a valid handoff first) until
+  // its own timeout kills it, which is exactly the "genuinely in flight,
+  // only ends via its own timeout" shape this test needs -- and leaves a
+  // valid handoff so decideNextAction would normally continue to stage 2,
+  // which is exactly what the pending pause command must prevent.
+  process.env.EGO_OS_FAKE_SCENARIO = "hang_once_then_done";
+  process.env.EGO_OS_FAKE_TASK_FILE = selected.file;
+  process.env.EGO_OS_FAKE_HANDOFF_FILE = runner.handoffPathFor(selected.task.id);
+  process.env.EGO_OS_FAKE_MARKER_FILE = markerFile;
+
+  const executePromise = runner.execute(selected, 10, 1);
+  await new Promise((r) => setTimeout(r, 500)); // let the fake actually spawn and be genuinely in flight
+  writeControlCommand(runner, "pause");
+  const ok = await executePromise;
+
+  assert.equal(ok, true, "a pause is a safe, intentional stop, not a failure");
+  const finalTask = runner.load(selected.file);
+  assert.equal(finalTask.status, "checkpointing");
+  assert.equal(finalTask.result.sessions.length, 1, "stage 1 must have actually run to completion (its own timeout), not been cut short");
+  assert.equal(finalTask.result.sessions[0].outcome, "timed_out_or_killed", "stage 1 ended via its OWN timeout, proving the pause command did not interrupt it early");
+  assert.equal(finalTask.result.paused_before_stage, 2, "the pause took effect only before stage 2, never mid-stage-1");
+
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(localDir, { recursive: true, force: true });
+});
+
+// --- 13. RUNNER-CONTROL-UI: emergency_stop DOES interrupt an in-flight session ---
+
+test("an emergency_stop command written mid-session DOES interrupt the running stage, marks the task interrupted, and leaves no orphan", async () => {
+  const { runner, localDir } = freshRunnerEnv();
+  const taskDir = path.join(runner.ROOT, "tasks", "queue");
+  fs.mkdirSync(taskDir, { recursive: true });
+  const selected = writeTask(taskDir, { id: "TEST-EMERGENCY-STOP", max_duration_minutes: 5 }); // a long budget -- only the emergency stop should end this quickly
+  runner.run("git", ["add", "--", path.relative(runner.ROOT, selected.file)]);
+  runner.run("git", ["commit", "-m", "Queue TEST-EMERGENCY-STOP"]);
+  runner.run("git", ["push", "origin", "main"]);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-task-"));
+  const markerFile = path.join(dir, "marker");
+  process.env.EGO_OS_FAKE_SCENARIO = "hang_forever";
+  process.env.EGO_OS_FAKE_TASK_FILE = selected.file;
+  process.env.EGO_OS_FAKE_HANDOFF_FILE = runner.handoffPathFor(selected.task.id);
+  process.env.EGO_OS_FAKE_MARKER_FILE = markerFile;
+
+  const start = Date.now();
+  const executePromise = runner.execute(selected, 10, 300);
+  await new Promise((r) => setTimeout(r, 500));
+  writeControlCommand(runner, "emergency_stop");
+  const ok = await executePromise;
+  const elapsedMs = Date.now() - start;
+
+  assert.equal(ok, false, "an emergency stop is a hard interruption, never reported as success");
+  assert.ok(elapsedMs < 60000, `emergency stop must act well before the 5-minute budget (took ${elapsedMs}ms)`);
+  const finalTask = runner.load(selected.file);
+  assert.equal(finalTask.status, "interrupted");
+  assert.equal(finalTask.result.requires_recovery_check, true);
+
+  await new Promise((r) => setTimeout(r, 500));
+  assert.ok(fs.existsSync(markerFile));
+  const grandchildPid = Number(fs.readFileSync(markerFile, "utf8").trim());
+  assert.equal(isAlive(grandchildPid), false, "emergency stop must still clean up the whole process tree, not just leave it running");
+
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(localDir, { recursive: true, force: true });
+});
+
+// --- 14. resuming a checkpointing task picks it back up, nextTask() includes it ---
+
+test("nextTask() includes a checkpointing task (resumed after pause), unlike waiting_for_auth which it must never auto-select", () => {
+  const { localDir } = freshRunnerEnv();
+  const queueDir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-queue-"));
+  process.env.EGO_OS_RUNNER_QUEUE_DIR = queueDir;
+  delete require.cache[require.resolve("./claude_task_runner.js")];
+  const runner3 = require("./claude_task_runner.js");
+
+  writeTask(queueDir, { id: "TEST-CHECKPOINTING", status: "checkpointing", result: { sessions: [{ stage: 1 }] } });
+  writeTask(queueDir, { id: "TEST-WAITING-AUTH", status: "waiting_for_auth", result: { auth_error: { category: "authentication_required" } } });
+
+  const selected = runner3.nextTask();
+  assert.ok(selected, "a checkpointing task must be eligible for automatic pickup once resumed");
+  assert.equal(selected.task.id, "TEST-CHECKPOINTING");
+
+  // Once the only checkpointing task is gone, waiting_for_auth must never
+  // surface as a fallback -- proving it was excluded on principle, not just
+  // deprioritized behind the checkpointing task.
+  fs.rmSync(selected.file);
+  assert.equal(runner3.nextTask(), null, "waiting_for_auth must never be auto-selected -- it requires an explicit human retry");
+
+  fs.rmSync(queueDir, { recursive: true, force: true });
+  fs.rmSync(localDir, { recursive: true, force: true });
+  delete process.env.EGO_OS_RUNNER_QUEUE_DIR;
+});
+
 test("no fake_claude/setInterval process from any test in this file is still running", () => {
   const cpMod = require("child_process");
   // Filtered to Name='node.exe' specifically -- this PowerShell query
