@@ -318,6 +318,54 @@ test("execute() honors context_strategy:'single' as an explicit opt-out of auto-
 // criterion: zero orphaned processes after the WHOLE run, not just one
 // specific case of it.)
 
+// --- 10. the runner's own bookkeeping write must not block the next task ---
+// Found live in production use: TOKEN-EFFICIENCY-VERIFY's real
+// waiting_for_limit run left its task YAML modified-but-uncommitted (the
+// runner writes retry_after/rate_limit/sessions directly via fs, never
+// through a git commit), so the NEXT invocation's preflight() (which
+// requires a clean tree) refused to start ANY task, not just this one.
+
+test("execute()'s own post-session bookkeeping write is committed, so a second invocation's preflight() still succeeds", async () => {
+  const { runner, localDir } = freshRunnerEnv();
+  const taskDir = path.join(runner.ROOT, "tasks", "queue");
+  fs.mkdirSync(taskDir, { recursive: true });
+
+  const first = writeTask(taskDir, { id: "TEST-CLEAN-AFTER-LIMIT", max_duration_minutes: 0.5 });
+  runner.run("git", ["add", "--", path.relative(runner.ROOT, first.file)]);
+  runner.run("git", ["commit", "-m", "Queue TEST-CLEAN-AFTER-LIMIT"]);
+  runner.run("git", ["push", "origin", "main"]);
+  process.env.EGO_OS_FAKE_SCENARIO = "rate_limited";
+  process.env.EGO_OS_FAKE_TASK_FILE = first.file;
+  process.env.EGO_OS_FAKE_HANDOFF_FILE = runner.handoffPathFor(first.task.id);
+  const ok1 = await runner.execute(first, 10, 1);
+  assert.equal(ok1, true);
+
+  const statusAfterFirst = runner.run("git", ["status", "--porcelain"]);
+  assert.equal(statusAfterFirst.stdout.trim(), "", "the runner's own waiting_for_limit write must be committed, not left dirty");
+
+  // A second, unrelated task must still be runnable -- preflight() must not
+  // refuse because of the first task's leftover bookkeeping write. Queuing
+  // a new task always means committing its YAML first (exactly like this
+  // repo's own real "Queue <task>: ..." commits) -- a brand-new untracked
+  // file is a separate, pre-existing preflight() concern, not the one this
+  // test targets.
+  const second = writeTask(taskDir, { id: "TEST-CLEAN-AFTER-LIMIT-2" });
+  runner.run("git", ["add", "--", path.relative(runner.ROOT, second.file)]);
+  runner.run("git", ["commit", "-m", "Queue TEST-CLEAN-AFTER-LIMIT-2"]);
+  runner.run("git", ["push", "origin", "main"]);
+  process.env.EGO_OS_FAKE_SCENARIO = "instant_done";
+  process.env.EGO_OS_FAKE_TASK_FILE = second.file;
+  process.env.EGO_OS_FAKE_HANDOFF_FILE = runner.handoffPathFor(second.task.id);
+  const ok2 = await runner.execute(second, 10, 1);
+  assert.equal(ok2, true, "a second task must be runnable without a human manually cleaning up the first task's leftover state");
+
+  const statusAfterSecond = runner.run("git", ["status", "--porcelain"]);
+  assert.equal(statusAfterSecond.stdout.trim(), "", "the second task's own done bookkeeping write must also be committed");
+
+  fs.rmSync(taskDir, { recursive: true, force: true });
+  fs.rmSync(localDir, { recursive: true, force: true });
+});
+
 test("no fake_claude/setInterval process from any test in this file is still running", () => {
   const cpMod = require("child_process");
   // Filtered to Name='node.exe' specifically -- this PowerShell query

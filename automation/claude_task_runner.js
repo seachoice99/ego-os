@@ -162,6 +162,37 @@ function save(file, task) {
   fs.writeFileSync(file, JSON.stringify(task, null, 2) + "\n", "utf8");
 }
 
+// The runner's own post-session bookkeeping (sessions[], retry_after,
+// rate_limit, runner_error) is written directly to the task file via
+// save() -- Claude's own commits inside the stage never include these
+// fields, since they don't exist until after its process has already
+// exited. Left uncommitted, that write leaves the working tree dirty,
+// which the NEXT invocation's preflight() (clean-tree required) then
+// refuses to run past -- found live: TOKEN-EFFICIENCY-VERIFY's own
+// waiting_for_limit write blocked the whole queue, not just itself.
+// Scoped to exactly this one task file (never `git add -A`) so a stray
+// uncommitted change Claude itself left behind is never silently swept
+// in -- that should still fail the next preflight(), not be papered over.
+function commitRunnerState(file, taskId, label) {
+  const rel = path.relative(ROOT, file);
+  // Task files live under ROOT in every real invocation (tasks/queue/*.yaml
+  // inside the repo). Some tests deliberately place fake task files in an
+  // unrelated temp directory outside ROOT to isolate fixtures from the
+  // small throwaway git repo used for preflight() checks -- there is
+  // nothing to commit in that case, and `git add` on an out-of-repo path
+  // would just fail, so skip it rather than surface a spurious warning.
+  if (rel.startsWith("..") || path.isAbsolute(rel)) return { ok: true, committed: false, skipped: "outside repository root" };
+  const add = run("git", ["add", "--", rel]);
+  if (add.status !== 0) return { ok: false, reason: add.stderr.trim() || "git add failed" };
+  const staged = run("git", ["diff", "--cached", "--quiet"]);
+  if (staged.status === 0) return { ok: true, committed: false };
+  const commit = run("git", ["commit", "-m", `${taskId}: runner state (${label})`]);
+  if (commit.status !== 0) return { ok: false, reason: commit.stderr.trim() || "git commit failed" };
+  const push = run("git", ["push", "origin", "main"]);
+  if (push.status !== 0) return { ok: false, reason: push.stderr.trim() || "git push failed" };
+  return { ok: true, committed: true };
+}
+
 function handoffPathFor(taskId) {
   return path.join(HANDOFF_DIR, `${taskId}.json`);
 }
@@ -364,21 +395,29 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
       current.result.retry_after = decision.retryAfter;
       current.result.rate_limit = decision.rateLimit;
       save(file, current);
+      const commitResult = commitRunnerState(file, task.id, "waiting_for_limit");
+      if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s waiting_for_limit state: ${commitResult.reason} -- next preflight() may see a dirty tree`);
       console.log(`WAITING_FOR_LIMIT ${task.id} -- retry after ${decision.retryAfter}`);
       return true; // a legitimate pause, not a failure
     }
     if (decision.action === "done") {
       save(file, current);
+      const commitResult = commitRunnerState(file, task.id, "done bookkeeping");
+      if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s done bookkeeping: ${commitResult.reason} -- next preflight() may see a dirty tree`);
       console.log(`DONE ${task.id} (${sessions.length} session(s))`);
       return true;
     }
     if (decision.action === "blocked") {
       save(file, current);
+      const commitResult = commitRunnerState(file, task.id, "blocked");
+      if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s blocked state: ${commitResult.reason} -- next preflight() may see a dirty tree`);
       console.log(`BLOCKED ${task.id} — awaiting a real Owner decision (not a failure)`);
       return true;
     }
     if (decision.action === "continue_next_stage") {
       save(file, current);
+      const commitResult = commitRunnerState(file, task.id, `stage ${stageIndex + 1} handoff bookkeeping`);
+      if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s stage bookkeeping: ${commitResult.reason} -- next stage's git-state block may show it as dirty`);
       console.log(`STAGE ${task.id} #${stageIndex + 1} ran out of time -- continuing with its handoff in a new session`);
       stageIndex += 1;
       continue;
@@ -387,6 +426,10 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
     current.status = "failed";
     current.result = { ...current.result, runner_error: decision.reason, log: logFile, finished_at: new Date().toISOString() };
     save(file, current);
+    {
+      const commitResult = commitRunnerState(file, task.id, "failed");
+      if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s failed state: ${commitResult.reason} -- next preflight() may see a dirty tree`);
+    }
     console.error(`FAILED ${task.id} — queue stopped`);
     return false;
   }
@@ -397,6 +440,10 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
   current.status = "failed";
   current.result = { ...(current.result || {}), sessions, runner_error: `exhausted ${maxStages} stage(s) without reaching done/blocked`, finished_at: new Date().toISOString() };
   save(file, current);
+  {
+    const commitResult = commitRunnerState(file, task.id, "failed (stage budget exhausted)");
+    if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s failed state: ${commitResult.reason} -- next preflight() may see a dirty tree`);
+  }
   console.error(`FAILED ${task.id} — queue stopped (stage budget exhausted)`);
   return false;
 }
@@ -425,7 +472,7 @@ async function main() {
 
 module.exports = {
   run, runClaude, killProcessTree, load, save, preflight, nextTask, execute, main,
-  buildStagePrompt, gitStateBlockNow, handoffPathFor, readHandoff,
+  buildStagePrompt, gitStateBlockNow, handoffPathFor, readHandoff, commitRunnerState,
   CLAUDE, LOCK, LOG_DIR, HANDOFF_DIR, QUEUE, ROOT,
 };
 

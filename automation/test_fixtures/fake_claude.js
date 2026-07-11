@@ -67,6 +67,23 @@ function writeHandoff(fields) {
   }));
 }
 
+// A real Claude Code session commits and pushes the task file itself as
+// part of finishing (the runner's prompt rule 4/6) -- best-effort here so
+// tests that place the fake task file inside a real git repo see the same
+// clean-tree-afterward behavior a real session produces. Silently a no-op
+// when the task file lives outside any repo (most existing test fixtures
+// use an unrelated temp dir on purpose, to isolate them from git).
+function commitIfInRepo(message) {
+  if (!taskFile) return;
+  const cpMod = require("child_process");
+  const dir = require("path").dirname(taskFile);
+  const check = cpMod.spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: dir, encoding: "utf8" });
+  if (check.status !== 0 || check.stdout.trim() !== "true") return;
+  cpMod.spawnSync("git", ["add", "--", taskFile], { cwd: dir });
+  cpMod.spawnSync("git", ["commit", "-m", message], { cwd: dir });
+  cpMod.spawnSync("git", ["push", "origin", "main"], { cwd: dir });
+}
+
 function finishDone() {
   const t = loadTask();
   t.status = "done";
@@ -75,6 +92,7 @@ function finishDone() {
     t.result.final_sync = { local_head: "fakehead", origin_head: "fakehead", production_head: "fakehead", restart_performed: false };
   }
   saveTask(t);
+  commitIfInRepo(`${t.id}: fake stage done`);
   writeHandoff({ remaining: "nothing -- task complete" });
   emitResult();
   process.exit(0);
@@ -90,6 +108,7 @@ switch (scenario) {
     t.status = "blocked";
     t.result = { ...(t.result || {}), reason: "fake: awaiting owner decision" };
     saveTask(t);
+    commitIfInRepo(`${t.id}: fake stage blocked`);
     emitResult();
     process.exit(0);
     break;
