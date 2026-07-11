@@ -35,7 +35,22 @@ function run(file, args, timeout = 60000, opts = {}) {
 // with the real CLI: the same dangerous string passed via stdin arrived
 // byte-for-byte with no shell interpretation and no injected command.
 function runClaude(promptText, args, timeout) {
-  return run(CLAUDE, args, timeout, { shell: true, input: promptText });
+  const output = run(CLAUDE, args, timeout, { shell: true, input: promptText });
+  // On Windows, shell:true spawns cmd.exe -> claude.cmd -> claude.exe as a
+  // process chain. spawnSync returning control to us does not guarantee
+  // that whole chain has actually exited -- verified live: a DA-01 run's
+  // underlying claude.exe (confirmed by PID and start time) kept running,
+  // dispatched its own background Agent-tool subagents, and kept mutating
+  // the task file for six more minutes after this function had already
+  // returned and the caller had moved on to mark the task failed. That
+  // left an unsupervised process racing a human (or a fresh retry) against
+  // the same working tree. Unconditionally tree-kill whatever spawnSync's
+  // own pid refers to once we're done waiting on it -- a no-op if it has
+  // already exited cleanly, a hard safety net if it has not.
+  if (output.pid) {
+    cp.spawnSync("taskkill", ["/F", "/T", "/PID", String(output.pid)], { windowsHide: true });
+  }
+  return output;
 }
 
 function load(file) {
