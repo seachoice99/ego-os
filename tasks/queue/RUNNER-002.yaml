@@ -1,0 +1,42 @@
+{
+  "id": "RUNNER-002",
+  "status": "ready",
+  "priority": "P1",
+  "title": "Documentation task validating the fixed runner final-sync protocol",
+  "prompt": "This is a second small, safe runner-plumbing task. Its purpose is to validate, through a real run, the final-sync protocol fix in automation/release_sync.js and rules 9-10 of your own generated instructions -- added specifically because RUNNER-001 left production one commit behind origin/main (its final metadata commit was pushed but never itself deployed).\n\nDo exactly this:\n1. Create automation/RUNNER_PROTOCOL_HISTORY.md documenting, in a few short paragraphs: what happened with RUNNER-001 (production ended up one commit behind origin/main because the final task-status metadata commit was never itself deployed), and how automation/release_sync.js's planFinalSync/verifyFinalSyncEvidence fix it (metadata-only diffs fast-forward without a restart; application-code diffs require the normal restart cycle; divergence stops the task instead of forcing a sync). Include the literal marker 'RUNNER_PROTOCOL_FIX_VALIDATED' somewhere in the file.\n2. Read the file back from disk and confirm the marker is present before doing anything else.\n3. Touch no other file besides this one and this task's own YAML (tasks/queue/RUNNER-002.yaml). Do not touch ego_os/, tests/, architecture/, memory/decisions/, company/, automation/claude_task_runner.js, automation/release_sync.js, automation/release_sync.test.js, automation/README.md, or any other tasks/queue/*.yaml.\n4. Run the existing pytest suite and confirm it still passes.\n5. Commit the implementation (message starting 'RUNNER-002:'), push, deploy to production per DEPLOYMENT.md (pull + restart ego-os.service), confirm the service is active and an unauthenticated request returns 401 while an authenticated one returns 200.\n6. Record that evidence and status 'done' in this task file's result object, then follow rules 9 and 10 of your instructions exactly: make a SEPARATE final metadata commit (message also starting 'RUNNER-002:') containing only this task's own YAML update, push it to origin/main, then reconcile production with it using the final-sync protocol. Since the only thing that changes in that final commit is this task's own YAML, this must resolve to a fast-forward-only sync onto production with NO restart -- if your own diff check finds anything else changed in that range, stop instead of forcing it. Record result.final_sync = {local_head, origin_head, production_head, restart_performed: false} with all three heads identical.\n7. Before finishing, verify and be prepared to report: local HEAD == origin/main == production HEAD, working tree clean, service active, HTTP 401 unauthenticated / 200 authenticated.",
+  "acceptance": [
+    "automation/RUNNER_PROTOCOL_HISTORY.md exists and contains the literal marker 'RUNNER_PROTOCOL_FIX_VALIDATED'",
+    "Only automation/RUNNER_PROTOCOL_HISTORY.md and tasks/queue/RUNNER-002.yaml were changed -- no other file in the repository was modified",
+    "Existing pytest suite passes with no failures",
+    "An implementation commit and a separate final metadata commit both exist on main, both prefixed 'RUNNER-002:', both pushed to origin/main",
+    "The implementation commit was deployed to production with a normal restart and HTTP 401/200 confirmed",
+    "The final metadata commit was reconciled onto production via a fast-forward-only pull with NO restart, because its diff is exclusively tasks/queue/RUNNER-002.yaml",
+    "result.final_sync is recorded with local_head == origin_head == production_head and restart_performed: false",
+    "tasks/queue/RUNNER-002.yaml status is 'done' with the result object described above",
+    "No credentials, .env contents, or other secrets appear anywhere in commit history, task YAML, or logs"
+  ],
+  "allowed_paths": [
+    "automation/RUNNER_PROTOCOL_HISTORY.md",
+    "tasks/queue/RUNNER-002.yaml"
+  ],
+  "forbidden_paths": [
+    "ego_os/",
+    "tests/",
+    "architecture/",
+    "memory/decisions/",
+    "company/",
+    "automation/claude_task_runner.js",
+    "automation/release_sync.js",
+    "automation/release_sync.test.js",
+    "automation/README.md",
+    "tasks/queue/SR-01.yaml",
+    "tasks/queue/SR-02.yaml",
+    "tasks/queue/SR-03.yaml",
+    "tasks/queue/SR-04.yaml",
+    "tasks/queue/RUNNER-001.yaml"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "automatic",
+  "result": null
+}
