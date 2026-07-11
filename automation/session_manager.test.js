@@ -15,6 +15,7 @@ const {
   buildGitStateBlock,
   buildHandoffBlock,
   estimatePromptSize,
+  classifyFatalOutput,
   classifySessionOutcome,
   decideNextAction,
   claudeInvocationArgs,
@@ -279,4 +280,67 @@ test("decideNextAction: a timed-out stage with no stage budget left fails instea
 test("decideNextAction: an ordinary non-timeout, non-done exit is a real failure, not a retry", () => {
   const result = decideNextAction({ ...BASE_DECISION_INPUT, sessionOutcome: { outcome: "exited_error", status: 1 } });
   assert.equal(result.action, "fail");
+});
+
+// --- fatal-pattern classification (RUNNER-CONTROL-UI fail-closed guard) ---
+// The exact live defect this guards against: a child Claude process prints
+// an authentication/subscription failure but still exits 0 -- exit code
+// alone must never be read as success.
+
+test("classifyFatalOutput recognizes the real subscription-disabled message", () => {
+  const text = "Your organization has disabled Claude subscription access for Claude Code. Use an Anthropic API key instead, or ask your admin to enable access";
+  const result = classifyFatalOutput(text);
+  assert.ok(result);
+  assert.equal(result.category, "authentication_required");
+});
+
+test("classifyFatalOutput returns null for ordinary, non-fatal output", () => {
+  assert.equal(classifyFatalOutput("Wrote 3 files. Tests passed. Committed abc123."), null);
+});
+
+test("classifySessionOutcome reports auth_required for the subscription message even with a clean (status 0) exit", () => {
+  const stdout = "some normal turns...\nYour organization has disabled Claude subscription access for Claude Code. Use an Anthropic API key instead, or ask your admin to enable access\n";
+  const result = classifySessionOutcome({ status: 0, signal: null, stdout, stderr: "" });
+  assert.equal(result.outcome, "auth_required");
+  assert.equal(result.fatal.category, "authentication_required");
+});
+
+test("decideNextAction: the exact live defect -- subscription-disabled message with exit 0 and self-reported done must NOT be 'done'", () => {
+  const outcome = classifySessionOutcome({
+    status: 0,
+    signal: null,
+    stdout: "Your organization has disabled Claude subscription access for Claude Code. Use an Anthropic API key instead, or ask your admin to enable access",
+    stderr: "",
+  });
+  const result = decideNextAction({
+    ...BASE_DECISION_INPUT,
+    sessionOutcome: outcome,
+    taskStatus: "done", // the task file itself deceptively (or confusedly) claims done
+    workingTreeClean: true,
+    finalSyncOk: { ok: true },
+    processExitedZero: true,
+  });
+  assert.notEqual(result.action, "done");
+  assert.equal(result.action, "auth_required");
+  assert.equal(result.fatal.category, "authentication_required");
+});
+
+test("decideNextAction: a non-auth fatal pattern (e.g. permission denied) also never becomes 'done', even with a clean exit", () => {
+  const outcome = classifySessionOutcome({ status: 0, signal: null, stdout: "Error: Permission denied writing to /etc/", stderr: "" });
+  const result = decideNextAction({
+    ...BASE_DECISION_INPUT,
+    sessionOutcome: outcome,
+    taskStatus: "done",
+    workingTreeClean: true,
+    finalSyncOk: { ok: true },
+    processExitedZero: true,
+  });
+  assert.equal(result.action, "fail");
+  assert.match(result.reason, /permission_denied/);
+});
+
+test("classifySessionOutcome still detects a rate limit when no fatal pattern is present", () => {
+  const stdout = '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":9999999999,"rateLimitType":"five_hour"}}\n';
+  const result = classifySessionOutcome({ status: 1, signal: null, stdout, stderr: "" });
+  assert.equal(result.outcome, "rate_limited");
 });

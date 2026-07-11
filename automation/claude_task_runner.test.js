@@ -362,7 +362,43 @@ test("execute()'s own post-session bookkeeping write is committed, so a second i
   const statusAfterSecond = runner.run("git", ["status", "--porcelain"]);
   assert.equal(statusAfterSecond.stdout.trim(), "", "the second task's own done bookkeeping write must also be committed");
 
-  fs.rmSync(taskDir, { recursive: true, force: true });
+  // Deliberately not removing taskDir here: it lives inside the shared fake
+  // repo, and every file in it is already committed -- deleting it via fs
+  // (not git) would dirty the tree for whatever test runs next, which is
+  // exactly the class of bug this test exists to catch in the first place.
+  fs.rmSync(localDir, { recursive: true, force: true });
+});
+
+// --- 11. fail-closed: auth/subscription failure with exit 0 must never be "done" ---
+// The exact live defect reported: a child process can print
+// "Your organization has disabled Claude subscription access for Claude
+// Code..." while still exiting 0 and having already written status "done"
+// (even committed, even with a valid handoff and clean tree) to its own
+// task file. The runner must refuse this, not just the pure decision logic.
+
+test("execute() refuses a 'done' status when the real process output contains the subscription-disabled message, even with exit 0", async () => {
+  const { runner, localDir } = freshRunnerEnv();
+  const taskDir = path.join(runner.ROOT, "tasks", "queue");
+  fs.mkdirSync(taskDir, { recursive: true });
+
+  const selected = writeTask(taskDir, { id: "TEST-AUTH-FAILCLOSED" });
+  runner.run("git", ["add", "--", path.relative(runner.ROOT, selected.file)]);
+  runner.run("git", ["commit", "-m", "Queue TEST-AUTH-FAILCLOSED"]);
+  runner.run("git", ["push", "origin", "main"]);
+
+  process.env.EGO_OS_FAKE_SCENARIO = "auth_disabled_exit_zero";
+  process.env.EGO_OS_FAKE_TASK_FILE = selected.file;
+  process.env.EGO_OS_FAKE_HANDOFF_FILE = runner.handoffPathFor(selected.task.id);
+
+  const ok = await runner.execute(selected, 10, 1);
+  assert.equal(ok, false, "an auth/subscription failure must stop the queue, not report success");
+
+  const finalTask = runner.load(selected.file);
+  assert.notEqual(finalTask.status, "done", "must never accept 'done' when a fatal auth pattern was printed, regardless of exit code");
+  assert.equal(finalTask.status, "waiting_for_auth");
+  assert.equal(finalTask.result.auth_error.category, "authentication_required");
+
+  // Not removing taskDir -- see the identical note in the previous test.
   fs.rmSync(localDir, { recursive: true, force: true });
 });
 

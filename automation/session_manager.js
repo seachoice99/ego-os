@@ -155,15 +155,51 @@ function estimatePromptSize(promptText) {
   return { chars, approxTokens: Math.ceil(chars / 4) };
 }
 
+// --- Fatal-pattern classification (RUNNER-CONTROL-UI fail-closed guard) --
+
+// A child Claude process can print an authentication/subscription failure
+// and still exit 0 -- observed directly: "Your organization has disabled
+// Claude subscription access for Claude Code. Use an Anthropic API key
+// instead, or ask your admin to enable access." Exit code alone is never
+// sufficient evidence of success; these patterns must be checked and must
+// win over any self-reported "done" status, regardless of exit code or
+// working-tree cleanliness.
+const FATAL_PATTERNS = [
+  { category: "authentication_required", pattern: /disabled claude subscription access/i },
+  { category: "authentication_required", pattern: /use an anthropic api key instead/i },
+  { category: "authentication_required", pattern: /invalid api key/i },
+  { category: "authentication_required", pattern: /authentication_error/i },
+  { category: "permission_denied", pattern: /permission denied/i },
+  { category: "model_unavailable", pattern: /model[_ ]not[_ ]found|model is not available/i },
+  { category: "network_failure", pattern: /econnrefused|enotfound|network error|fetch failed/i },
+];
+
+function classifyFatalOutput(text) {
+  if (!text) return null;
+  for (const { category, pattern } of FATAL_PATTERNS) {
+    const match = text.match(pattern);
+    if (match) return { category, matched: match[0] };
+  }
+  return null;
+}
+
 // --- Session outcome classification -----------------------------------
 
 // Distinguishes why a spawned session ended, from the runner's own
 // deterministic, externally-observable signals -- never by trusting
-// free-text self-report alone.
+// free-text self-report alone. Fatal-pattern detection runs FIRST and
+// unconditionally: a recognized fatal condition (auth/subscription above
+// all, but also permission/model/network) must never be classified as
+// exited_clean, no matter the exit code.
 function classifySessionOutcome({ status, signal, stdout, stderr }) {
   const combined = `${stdout || ""}\n${stderr || ""}`;
+  const fatal = classifyFatalOutput(combined);
+  if (fatal && fatal.category === "authentication_required") {
+    return { outcome: "auth_required", fatal };
+  }
   const rateLimit = detectRateLimit(combined);
   if (rateLimit) return { outcome: "rate_limited", rateLimit };
+  if (fatal) return { outcome: "exited_error", status, fatal };
   if (signal) return { outcome: "timed_out_or_killed", signal };
   if (status === 0) return { outcome: "exited_clean" };
   return { outcome: "exited_error", status };
@@ -187,6 +223,17 @@ function decideNextAction({
   maxStages,
   handoffAfterStage, // parsed handoff JSON read from disk after the session, or null
 }) {
+  // Fail-closed: a recognized fatal pattern always wins, before anything
+  // else is even considered -- including a self-reported "done" status and
+  // a zero exit code. This is what prevents the exact defect reported live:
+  // a child process printing an auth/subscription failure while still
+  // exiting 0 and having already written status "done" to its own task file.
+  if (sessionOutcome.outcome === "auth_required") {
+    return { action: "auth_required", fatal: sessionOutcome.fatal };
+  }
+  if (sessionOutcome.fatal) {
+    return { action: "fail", reason: `fatal condition detected (${sessionOutcome.fatal.category}): ${sessionOutcome.fatal.matched}` };
+  }
   if (sessionOutcome.outcome === "rate_limited") {
     return {
       action: "wait_for_limit",
@@ -238,6 +285,8 @@ module.exports = {
   buildGitStateBlock,
   buildHandoffBlock,
   estimatePromptSize,
+  FATAL_PATTERNS,
+  classifyFatalOutput,
   classifySessionOutcome,
   decideNextAction,
   claudeInvocationArgs,

@@ -400,6 +400,21 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
       console.log(`WAITING_FOR_LIMIT ${task.id} -- retry after ${decision.retryAfter}`);
       return true; // a legitimate pause, not a failure
     }
+    if (decision.action === "auth_required") {
+      // Never auto-retried like waiting_for_limit -- an auth/subscription
+      // failure does not self-heal on a timer, and nextTask() naturally
+      // excludes any status it doesn't explicitly allow (ready, or
+      // waiting_for_limit past retry_after), so this task simply will not
+      // be picked up again until a human fixes access and moves it back.
+      current.status = "waiting_for_auth";
+      current.result.auth_error = decision.fatal;
+      current.result.finished_at = new Date().toISOString();
+      save(file, current);
+      const commitResult = commitRunnerState(file, task.id, "waiting_for_auth");
+      if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s waiting_for_auth state: ${commitResult.reason} -- next preflight() may see a dirty tree`);
+      console.error(`AUTHENTICATION_REQUIRED ${task.id} -- ${decision.fatal.category}: ${decision.fatal.matched} -- queue stopped, needs human action`);
+      return false; // a hard stop: every other queued task would hit the same wall
+    }
     if (decision.action === "done") {
       save(file, current);
       const commitResult = commitRunnerState(file, task.id, "done bookkeeping");

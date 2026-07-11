@@ -18,6 +18,11 @@
  *   instant_blocked       -- writes status "blocked", exits 0.
  *   rate_limited          -- emits a rate_limit_event with a non-"allowed"
  *                            status, exits non-zero.
+ *   auth_disabled_exit_zero -- writes status "done" (committed, valid
+ *                            handoff, clean tree -- everything else says
+ *                            success) but also prints the real
+ *                            subscription-disabled message, still exits 0.
+ *                            The runner must still refuse "done".
  *   hang_forever           -- spawns a detached grandchild (to prove
  *                            tree-kill cleans up more than just the direct
  *                            child) and then hangs until killed.
@@ -119,6 +124,18 @@ switch (scenario) {
       rate_limit_info: { status: "rejected", resetsAt: Math.floor(Date.now() / 1000) + 3600, rateLimitType: "five_hour" },
     }) + "\n");
     process.exit(1);
+    break;
+  }
+  case "auth_disabled_exit_zero": {
+    // The exact live defect this exists to guard against: the process does
+    // EVERYTHING a genuinely successful stage would do -- writes status
+    // "done", commits it, leaves a valid handoff, clean tree -- but ALSO
+    // printed a real subscription/auth failure, and still exits 0. Every
+    // signal except the fatal-pattern text says "success"; the runner must
+    // still refuse it, proving the fatal-pattern check is not redundant
+    // with (and cannot be bypassed by) an otherwise well-formed "done".
+    process.stdout.write("Your organization has disabled Claude subscription access for Claude Code. Use an Anthropic API key instead, or ask your admin to enable access\n");
+    finishDone();
     break;
   }
   case "hang_forever": {
