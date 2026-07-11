@@ -109,6 +109,36 @@ CREATE TABLE IF NOT EXISTS skill_audit_events (
     detail TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS digital_assets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER REFERENCES projects(id),
+    source_task_id INTEGER NOT NULL REFERENCES tasks(id),
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    asset_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'candidate',
+    origin TEXT NOT NULL DEFAULT 'automatic',
+    target_audience TEXT,
+    reusable_value TEXT,
+    evidence TEXT NOT NULL DEFAULT '[]',
+    value_thesis TEXT,
+    monetization_thesis TEXT,
+    validation_status TEXT,
+    owner_decision TEXT,
+    provenance TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS digital_asset_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id INTEGER NOT NULL REFERENCES digital_assets(id),
+    event_type TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    detail TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -718,5 +748,295 @@ def get_employee_task_history(employee_id):
             if employee_id in json.loads(r["employees_involved"]):
                 history.append({"task_id": r["task_id"], "request_text": r["request_text"], "status": r["status"]})
         return history
+    finally:
+        conn.close()
+
+
+# --- Digital Assets (v0.5, ADR-0007 / architecture/013) ---------------------
+#
+# A Digital Asset Candidate and an Accepted Digital Asset are the same
+# underlying `digital_assets` row at different points in one lifecycle
+# (ADR-0007 decision 1) -- `status` is a derived, queryable convenience
+# field, never the only record of what happened. The real source of truth
+# is the append-only `digital_asset_events` history (ADR-0007 decision 6),
+# so `transition_asset` below is the single enforcement point for every
+# status change: it validates against the allowed-transition map before
+# writing anything, then writes the new status and the event in the same
+# connection/transaction. No function in this module ever deletes a
+# `digital_assets` or `digital_asset_events` row (ADR-0007 decision 7).
+
+
+class DigitalAssetError(Exception):
+    """Base class for every Digital Asset failure: an invalid status/event
+    value, a reference to a source Task that does not exist, or (see
+    DigitalAssetTransitionError) a disallowed lifecycle transition. Always
+    a clean, human-readable message."""
+
+
+class DigitalAssetTransitionError(DigitalAssetError):
+    """A requested `digital_assets.status` transition is not allowed by
+    architecture/013 Section 6's lifecycle map (e.g. candidate ->
+    internally_validated directly, or accepted -> internally_validated
+    without a passed validation result and a monetization thesis recorded
+    in the same call)."""
+
+
+_ASSET_STATUSES = {"candidate", "accepted", "rejected", "internally_validated", "archived"}
+
+_ASSET_EVENT_TYPES = {
+    "candidate_created", "owner_accepted", "owner_rejected", "validation_started",
+    "validation_passed", "validation_failed", "thesis_updated", "archived",
+}
+
+_ASSET_VALIDATION_STATUSES = {"started", "passed", "failed", "needs_revision"}
+
+# Which validation_status value(s) are semantically consistent with each
+# event_type -- e.g. a validation_started event can never be paired with
+# validation_status='passed' in the same call, even though both are
+# individually valid values.
+_EVENT_VALIDATION_STATUS = {
+    "validation_started": {"started"},
+    "validation_failed": {"failed", "needs_revision"},
+    "validation_passed": {"passed"},
+    "thesis_updated": set(),
+}
+
+# Actors allowed to archive an Asset (architecture/013 Section 6: "any
+# status -> archived", implemented for model completeness) -- deliberately
+# the same system/owner restriction every other non-Owner-only transition
+# uses, so archiving is never reachable by an unrestricted caller.
+_ASSET_ARCHIVE_ACTORS = {"system", "owner"}
+
+# (current_status, new_status) -> {event_type: {allowed actors}}. Every
+# transition not present here is disallowed. The ("accepted", "accepted")
+# self-loop covers validation_started/validation_failed/thesis_updated,
+# which record progress without moving the Asset out of `accepted`
+# (architecture/013 Section 6: "validation_started/validation_failed/
+# needs_revision update ONLY validation_status").
+_ASSET_TRANSITIONS = {
+    ("candidate", "accepted"): {"owner_accepted": {"owner"}},
+    ("candidate", "rejected"): {"owner_rejected": {"owner"}},
+    ("rejected", "accepted"): {"owner_accepted": {"owner"}},
+    ("accepted", "internally_validated"): {"validation_passed": {"system", "owner"}},
+    ("accepted", "accepted"): {
+        "validation_started": {"system", "owner"},
+        "validation_failed": {"system", "owner"},
+        "thesis_updated": {"system", "owner"},
+    },
+}
+
+
+def _parse_asset(row):
+    if row is None:
+        return None
+    asset = dict(row)
+    asset["evidence"] = json.loads(asset["evidence"])
+    asset["provenance"] = json.loads(asset["provenance"])
+    if asset["monetization_thesis"] is not None:
+        asset["monetization_thesis"] = json.loads(asset["monetization_thesis"])
+    return asset
+
+
+def create_asset_candidate(
+    project_id, source_task_id, title, summary, asset_type,
+    target_audience, reusable_value, evidence, value_thesis, provenance,
+):
+    """Nominate a Candidate (ADR-0007 decision 2: this is nomination, never
+    acceptance -- the automatic system may never move a row past
+    `candidate`). Raises DigitalAssetError, rather than silently inserting,
+    if source_task_id does not reference a real Task."""
+    conn = get_connection()
+    try:
+        task_row = conn.execute("SELECT id FROM tasks WHERE id = ?", (source_task_id,)).fetchone()
+        if task_row is None:
+            raise DigitalAssetError(f"source_task_id {source_task_id!r} does not reference an existing task")
+        if project_id is not None:
+            project_row = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+            if project_row is None:
+                raise DigitalAssetError(f"project_id {project_id!r} does not reference an existing project")
+        cur = conn.execute(
+            "INSERT INTO digital_assets (project_id, source_task_id, title, summary, asset_type, "
+            "status, origin, target_audience, reusable_value, evidence, value_thesis, provenance) "
+            "VALUES (?, ?, ?, ?, ?, 'candidate', 'automatic', ?, ?, ?, ?, ?)",
+            (
+                project_id, source_task_id, title, summary, asset_type,
+                target_audience, reusable_value, json.dumps(evidence or []), value_thesis,
+                json.dumps(provenance),
+            ),
+        )
+        asset_id = cur.lastrowid
+        _insert_asset_event(
+            conn, asset_id, "candidate_created", "system",
+            detail=f"Candidate nominated from task {source_task_id}",
+        )
+        conn.commit()
+        return asset_id
+    finally:
+        conn.close()
+
+
+def get_asset(asset_id):
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM digital_assets WHERE id = ?", (asset_id,)).fetchone()
+        return _parse_asset(row)
+    finally:
+        conn.close()
+
+
+def get_assets(status=None):
+    conn = get_connection()
+    try:
+        if status is None:
+            rows = conn.execute("SELECT * FROM digital_assets ORDER BY id").fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM digital_assets WHERE status = ? ORDER BY id", (status,)
+            ).fetchall()
+        return [_parse_asset(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_asset_by_source_task(source_task_id):
+    """Whether ANY Digital Asset (in any status) already exists for this
+    Task -- the duplicate-prevention guard DA-03's automatic nomination
+    step will call before ever creating a second Candidate for the same
+    Task (architecture/013 Section 4: at most one automatic Candidate per
+    Task). Returns None, not raises, when there is no existing Asset."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM digital_assets WHERE source_task_id = ? ORDER BY id LIMIT 1",
+            (source_task_id,),
+        ).fetchone()
+        return _parse_asset(row)
+    finally:
+        conn.close()
+
+
+def get_asset_events(asset_id):
+    conn = get_connection()
+    try:
+        return conn.execute(
+            "SELECT * FROM digital_asset_events WHERE asset_id = ? ORDER BY id", (asset_id,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def _insert_asset_event(conn, asset_id, event_type, actor, detail=None):
+    if event_type not in _ASSET_EVENT_TYPES:
+        raise DigitalAssetError(f"invalid digital asset event_type: {event_type!r}")
+    conn.execute(
+        "INSERT INTO digital_asset_events (asset_id, event_type, actor, detail) VALUES (?, ?, ?, ?)",
+        (asset_id, event_type, actor, detail),
+    )
+
+
+def log_asset_event(asset_id, event_type, actor, detail=None):
+    """Append-only insert of one Digital Asset event, own connection/
+    transaction -- for callers that only need to record a fact (e.g. a
+    thesis_updated note) without also driving a status transition. Every
+    status-changing event should go through transition_asset instead, so
+    the status column and the event history can never disagree."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT id FROM digital_assets WHERE id = ?", (asset_id,)).fetchone()
+        if row is None:
+            raise DigitalAssetError(f"asset_id {asset_id!r} does not exist")
+        _insert_asset_event(conn, asset_id, event_type, actor, detail)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def transition_asset(
+    asset_id, new_status, event_type, actor, detail=None,
+    validation_status=None, monetization_thesis=None,
+):
+    """The single enforcement point for every `digital_assets.status`
+    change (architecture/013 Section 6). Validates the requested
+    transition against `_ASSET_TRANSITIONS` before writing anything, then
+    updates `status` (and any of `validation_status`/`monetization_thesis`/
+    `owner_decision` supplied in this same call) and appends exactly one
+    new event, in the same transaction. Never edits or removes an existing
+    event row."""
+    if new_status not in _ASSET_STATUSES:
+        raise DigitalAssetError(f"invalid digital asset status: {new_status!r}")
+    if event_type not in _ASSET_EVENT_TYPES:
+        raise DigitalAssetError(f"invalid digital asset event_type: {event_type!r}")
+    if validation_status is not None and validation_status not in _ASSET_VALIDATION_STATUSES:
+        raise DigitalAssetError(f"invalid validation_status: {validation_status!r}")
+    if (
+        validation_status is not None
+        and event_type in _EVENT_VALIDATION_STATUS
+        and validation_status not in _EVENT_VALIDATION_STATUS[event_type]
+    ):
+        raise DigitalAssetTransitionError(
+            f"validation_status {validation_status!r} is not consistent with event_type {event_type!r}"
+        )
+
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM digital_assets WHERE id = ?", (asset_id,)).fetchone()
+        if row is None:
+            raise DigitalAssetError(f"asset_id {asset_id!r} does not exist")
+        current_status = row["status"]
+
+        if new_status == "archived":
+            if event_type != "archived":
+                raise DigitalAssetTransitionError(
+                    f"transition to 'archived' requires event_type='archived', got {event_type!r}"
+                )
+            if actor not in _ASSET_ARCHIVE_ACTORS:
+                raise DigitalAssetTransitionError(
+                    f"actor {actor!r} may not archive an asset"
+                )
+        else:
+            allowed_events = _ASSET_TRANSITIONS.get((current_status, new_status))
+            if allowed_events is None:
+                raise DigitalAssetTransitionError(
+                    f"transition {current_status!r} -> {new_status!r} is not allowed"
+                )
+            allowed_actors = allowed_events.get(event_type)
+            if allowed_actors is None:
+                raise DigitalAssetTransitionError(
+                    f"event_type {event_type!r} cannot drive transition {current_status!r} -> {new_status!r}"
+                )
+            if actor not in allowed_actors:
+                raise DigitalAssetTransitionError(
+                    f"actor {actor!r} may not perform {event_type!r} for {current_status!r} -> {new_status!r}"
+                )
+
+        if new_status == "internally_validated":
+            if validation_status != "passed":
+                raise DigitalAssetTransitionError(
+                    "reaching internally_validated requires validation_status='passed' in this same call"
+                )
+            if not monetization_thesis:
+                raise DigitalAssetTransitionError(
+                    "reaching internally_validated requires a non-empty monetization_thesis in this same call"
+                )
+
+        updates = ["status = ?", "updated_at = datetime('now')"]
+        params = [new_status]
+        if validation_status is not None:
+            updates.append("validation_status = ?")
+            params.append(validation_status)
+        if monetization_thesis is not None:
+            updates.append("monetization_thesis = ?")
+            params.append(json.dumps(monetization_thesis))
+        if event_type == "owner_accepted":
+            updates.append("owner_decision = ?")
+            params.append("accepted")
+        elif event_type == "owner_rejected":
+            updates.append("owner_decision = ?")
+            params.append("rejected")
+        params.append(asset_id)
+
+        conn.execute(f"UPDATE digital_assets SET {', '.join(updates)} WHERE id = ?", params)
+        _insert_asset_event(conn, asset_id, event_type, actor, detail)
+        conn.commit()
     finally:
         conn.close()

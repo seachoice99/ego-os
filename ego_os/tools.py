@@ -44,6 +44,20 @@ class ToolError(Exception):
     outside the repository, or a denylisted path."""
 
 
+def verify_artifact_reference(task_id, filename: str) -> Path:
+    """Confirm a generated artifact actually exists at its safe, task-scoped
+    path before it can be recorded in a digital_assets.provenance JSON blob
+    (architecture/013 Section 3) -- the exact same path-traversal-safety
+    pattern as main.py's download_artifact route, reused here rather than
+    reimplemented. Never copies the file; only validates and returns the
+    real path so the caller can store the filename/type reference."""
+    task_dir = (GENERATED_DIR / str(task_id)).resolve()
+    target = (task_dir / filename).resolve()
+    if not target.is_relative_to(task_dir) or not target.is_file():
+        raise ToolError(f"artifact '{filename}' for task {task_id} does not exist at a safe path")
+    return target
+
+
 def _resolve_repo_path(path: str) -> Path:
     target = (REPO_ROOT / path).resolve()
     if not target.is_relative_to(REPO_ROOT):

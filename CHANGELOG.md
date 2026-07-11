@@ -2,6 +2,18 @@
 
 All notable changes to Ego OS are recorded here, newest first. See `IMPLEMENTATION_ROADMAP.md` for the forward-looking plan this changelog reports against.
 
+## [Unreleased] — Digital Asset domain model: additive persistence, provenance, append-only events (DA-01)
+
+### Added
+
+- **`digital_assets` / `digital_asset_events` tables** (`ego_os/store.py`) — new, additive `CREATE TABLE IF NOT EXISTS` blocks (exactly like `skill_audit_events`); no existing `tasks`/`reports`/`memory`/`execution_events`/`employees`/`skill_audit_events` schema changed. A Digital Asset Candidate and an Accepted Digital Asset are the same `digital_assets` row at different points in one lifecycle (ADR-0007 decision 1) — `status` is a derived convenience field; `digital_asset_events` is the append-only source of truth for every transition, matching `architecture/013_DIGITAL_ASSET_MODEL.md`.
+- **`store.create_asset_candidate` / `get_asset` / `get_assets` / `get_asset_by_source_task` / `get_asset_events` / `log_asset_event` / `transition_asset`** — `transition_asset` is the single enforcement point for every status change, validated against an explicit allowed-transition map before writing anything: `candidate → accepted|rejected` and `rejected → accepted` require actor `owner`; `accepted → internally_validated` requires a `validation_status='passed'` and a non-empty `monetization_thesis` recorded in the same call; `candidate → internally_validated` directly is rejected; `any status → archived` is implemented for model completeness (architecture/013 Section 6) restricted to `system`/`owner` actors. No function deletes a `digital_assets` or `digital_asset_events` row (ADR-0007 decision 7); provenance is written once at Candidate creation and never mutated afterward.
+- **`tools.verify_artifact_reference(task_id, filename)`** — validates a generated artifact actually exists at its safe, task-scoped path (the same path-traversal-safety pattern as `main.py`'s `download_artifact` route) before it can be referenced in a Digital Asset's `provenance`; never copies the file, rejects a traversal attempt or a missing file.
+
+### Verified
+
+- 25 new tests (`tests/test_digital_assets.py`, 130 total with the existing suite): additive migration against an old DB copy, idempotent re-init, Candidate creation logging exactly one `candidate_created` event, every disallowed transition (direct `candidate → internally_validated`, `accepted → internally_validated` missing `validation_status` or `monetization_thesis`, an unmapped transition), `rejected → accepted` only via a new distinct `owner_accepted` event (the original `owner_rejected` event untouched), actor restrictions on Owner-decision and archive events, event_type/validation_status consistency, provenance immutability, missing source Task/Project rejection, an old-shaped Report still reading correctly, append-only event growth, no hard-delete code path, and artifact-reference path-traversal rejection. Persistence only — no HTTP route (DA-02), no `lifecycle.py`/`worker.py` change (DA-03).
+
 ## [Unreleased] — Autonomous task runner: fix production drift after a task's final metadata commit
 
 ### Fixed

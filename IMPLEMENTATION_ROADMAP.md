@@ -119,6 +119,8 @@ This is the primary implementation plan for Ego OS. It sequences work that is al
 
 **Deferred:** monetization scaling and retirement steps of the Digital Asset Lifecycle; everything past Stage 3.
 
+**Implementation progress (DA-01..DA-05, tracked in `tasks/queue/DA-0*.yaml`):** DA-01 (Digital Asset domain model, `ego_os/store.py`) delivered — additive `digital_assets`/`digital_asset_events` tables (no existing table altered), `store.transition_asset` as the single enforcement point for the lifecycle map in `architecture/013_DIGITAL_ASSET_MODEL.md` Section 6 (Owner-only acceptance/rejection, `accepted → internally_validated` gated on a passed validation result plus a monetization thesis recorded in the same call, no automatic path to `internally_validated`, archival restricted to system/owner actors), append-only `digital_asset_events` history with no hard-delete path anywhere, provenance written once at Candidate creation and never mutated, and a path-traversal-safe artifact-provenance helper (`tools.verify_artifact_reference`) reusing `main.py`'s existing `download_artifact` safety pattern. Persistence only — no HTTP route (DA-02) and no automatic nomination wiring into `lifecycle.py`/`worker.py` (DA-03) yet.
+
 ---
 
 ## 📋 Post-v0.5 Initiative — Skills and Capability Management
