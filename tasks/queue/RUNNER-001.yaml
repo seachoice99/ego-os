@@ -1,6 +1,6 @@
 {
   "id": "RUNNER-001",
-  "status": "ready",
+  "status": "testing",
   "priority": "P1",
   "title": "Runner plumbing validation: create and verify RUNNER_VALIDATION.md",
   "prompt": "This is a deliberately small, safe task whose only purpose is to prove the autonomous claude_task_runner.js pipeline actually works end to end (task selection, real Claude CLI invocation, real file edits, real commit/push/deploy, real health check) -- not to add product functionality.\n\nDo exactly this:\n1. Create automation/RUNNER_VALIDATION.md with content that includes: the literal task id 'RUNNER-001', the literal marker 'RUNNER_PLUMBING_OK', and the current UTC timestamp in ISO-8601 format at the moment you write it. A short paragraph explaining what this file is for is fine, but those two literal strings must both appear in the file.\n2. Read the file back from disk immediately after writing it and confirm its content is exactly what you intended (both required strings present) before doing anything else. If it does not match, stop and set status failed with the exact mismatch.\n3. Do not modify any other file except this task's own YAML (tasks/queue/RUNNER-001.yaml) and automation/RUNNER_VALIDATION.md. Do not touch ego_os/, tests/, architecture/, memory/decisions/, or company/.\n4. Run the existing pytest suite and confirm it still passes (this task does not change any application code, so this is a sanity check that your environment/working tree is not accidentally broken, not a requirement to add new tests).\n5. Commit with a message starting with 'RUNNER-001:', then push to origin/main.\n6. Deploy to production following DEPLOYMENT.md's update procedure (pull origin/main on the VPS as the egoos user, restart ego-os.service). Confirm the service is active.\n7. Health-check production: an unauthenticated HTTPS request to the app must return 401, and an authenticated request (credentials read from the server's own /opt/ego-os/.env, never printed or logged) must return 200. Never print or log OWNER_USERNAME, OWNER_PASSWORD, or any other secret at any point in this task.\n8. Update this task file's own status through in_progress -> testing -> deploying -> done, with a result object recording: the commit hash, pytest result line, production commit, service status, and the two HTTP check results.",
@@ -33,5 +33,6 @@
   "risks": [],
   "owner_approved": false,
   "release": "automatic",
-  "result": null
+  "result": null,
+  "started_at": "2026-07-11T06:55:16.087Z"
 }
