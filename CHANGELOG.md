@@ -2,6 +2,21 @@
 
 All notable changes to Ego OS are recorded here, newest first. See `IMPLEMENTATION_ROADMAP.md` for the forward-looking plan this changelog reports against.
 
+## [Unreleased] — Autonomous task runner: token/usage-limit-efficient staged execution (TOKEN-EFFICIENCY-001)
+
+### Added
+
+- **`automation/session_manager.js`** — pure decision logic for staged execution, extending the `release_sync.js` pattern: `decideNextAction()` is the single, fully-tested function the runner's stage loop dispatches through (done / blocked / continue to a fresh stage / wait for a rate limit / fail); `validateHandoff()` enforces a fixed 7-field shape and a 1500-word cap; `detectRateLimit()` recognizes the CLI's own structured `rate_limit_event` (a `status` other than `"allowed"`) plus plain-text fallback phrases as a legitimate, expected pause, never a code defect; `planStages()` turns an optional `checkpoints` YAML field into an explicit stage plan; `claudeInvocationArgs()` centralizes the exact, fixed argv passed to `claude` (never `--continue`/`--resume`, unit-tested to prove it).
+- **Staged execution in `claude_task_runner.js`** — a large task is no longer one unbounded session. Explicit `checkpoints` (if declared) fix the stage plan; otherwise the runner adapts at runtime, only splitting into a fresh session if a stage actually exhausts its `max_duration_minutes` (default: the CLI's `--timeout-minutes`), up to `max_auto_stages` (default 4) before failing rather than looping forever. `context_strategy: "single"` opts a task out entirely, reproducing the exact pre-existing single-session behavior. Every stage is a brand-new `claude -p` process; the next stage's prompt carries forward only the task's own YAML, current Git state, and the previous stage's handoff file (written to `%LOCALAPPDATA%\EgoOS\claude-runner\handoffs\<task_id>.json`, outside Git) — never the prior conversation or a full diff. New optional `model` field passes through as `--model <id>`; `token_budget` is recorded/logged, not causally enforced (no reliable native mechanism to meter a running session's usage from outside it exists).
+- **`waiting_for_limit` task status** — a real Claude usage/rate limit (detected structurally, not guessed) parks the task with a `result.retry_after` timestamp instead of failing it; `nextTask()` will not pick it back up before that time, and no paid usage-credit workaround is enabled.
+- **Observability**: every stage appends to `result.sessions[]` — model, duration, prompt size (chars + approximate tokens, also logged to the console at stage start), handoff size, outcome, and its log path. No secrets ever included.
+- **A real Windows process-management fix, found while testing this feature**: `spawnSync`'s own built-in `timeout` kills the *direct* child (`cmd.exe`) the instant it fires -- by the time the runner's own cleanup code got control back, that PID was already gone, so a genuine timeout could still orphan the underlying `claude.exe` (a variant of the original DA-01 orphan defect, via a different race). `runClaude()` now uses async `cp.spawn` with its own `setTimeout`, so the kill happens on a still-live process tree. Separately, `taskkill /F /T /PID X` itself proved to be an unreliable heuristic beyond a shallow tree (it killed `cmd.exe` but left grandchildren running) -- replaced with `killProcessTree()`, which walks the real process tree via WMI (`Get-CimInstance Win32_Process`) and kills every descendant explicitly.
+- 56 total Node tests (`node --test`, up from 14): `session_manager.test.js` (35, pure logic) and `claude_task_runner.test.js` (11, integration-style against a real-but-fake mock `claude` executable — `automation/test_fixtures/fake_claude.js` — never a real Claude Code process), including a global sweep proving zero fake sessions or their descendants survive the whole test run.
+
+### Compatibility
+
+Every existing task YAML (`SR-*`, `RUNNER-*`, `DA-*`) requires no new field and runs exactly as before when it completes within its original timeout; a task that times out now gets a handoff-based continuation instead of an immediate hard failure, which is strictly an improvement, not a behavior change task authors need to account for.
+
 ## [Unreleased] — Owner Asset Inbox: list, detail, accept, reject (DA-02)
 
 ### Added

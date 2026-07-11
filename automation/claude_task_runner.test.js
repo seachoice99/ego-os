@@ -1,0 +1,332 @@
+"use strict";
+
+/**
+ * Integration-style tests for TOKEN-EFFICIENCY-001's staged execution.
+ * Spawns automation/test_fixtures/fake_claude.js (never a real Claude Code
+ * process) through the REAL runner wiring (runClaude/execute), so process
+ * isolation, tree-kill, and handoff-file plumbing are proven against real
+ * child processes, not just asserted against pure logic.
+ */
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const cp = require("child_process");
+
+const FIXTURES = path.join(__dirname, "test_fixtures");
+const FAKE_CLAUDE = path.join(FIXTURES, "fake_claude.cmd");
+
+// preflight() runs real (read-only after setup) git checks -- status,
+// fetch, rev-parse, branch. Rather than depending on THIS checkout's
+// working tree happening to be clean and pushed whenever tests run, build
+// one small, throwaway repo with a real "origin" remote once, and point
+// every test's EGO_OS_RUNNER_ROOT_DIR at it. Nothing in any test scenario
+// below touches files inside this repo (the task files themselves live in
+// their own separate temp directories), so it stays clean and reusable
+// across the whole file.
+function git(args, cwd) {
+  const result = cp.spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+  return result.stdout;
+}
+
+function setupFakeRepo() {
+  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-origin-"));
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-work-"));
+  git(["init", "--bare", "-b", "main"], bareDir);
+  git(["init", "-b", "main"], workDir);
+  git(["config", "user.email", "test@example.com"], workDir);
+  git(["config", "user.name", "Test"], workDir);
+  fs.writeFileSync(path.join(workDir, "README.md"), "fake repo for TOKEN-EFFICIENCY-001 tests\n");
+  git(["add", "README.md"], workDir);
+  git(["commit", "-m", "initial"], workDir);
+  git(["remote", "add", "origin", bareDir], workDir);
+  git(["push", "-u", "origin", "main"], workDir);
+  return { bareDir, workDir };
+}
+
+let FAKE_REPO = null;
+
+function freshRunnerEnv() {
+  if (!FAKE_REPO) FAKE_REPO = setupFakeRepo();
+  const localDir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-runner-test-"));
+  process.env.EGO_OS_RUNNER_CLAUDE_PATH = FAKE_CLAUDE;
+  process.env.EGO_OS_RUNNER_LOCAL_DIR = localDir;
+  process.env.EGO_OS_RUNNER_ROOT_DIR = FAKE_REPO.workDir;
+  delete process.env.EGO_OS_RUNNER_QUEUE_DIR;
+  // Force a fresh require so the runner module re-reads these env vars
+  // into its CLAUDE/LOCAL/ROOT/LOCK/LOG_DIR/HANDOFF_DIR constants --
+  // module caching would otherwise leak state between tests.
+  delete require.cache[require.resolve("./claude_task_runner.js")];
+  const runner = require("./claude_task_runner.js");
+  return { runner, localDir };
+}
+
+function writeTask(dir, overrides) {
+  const task = {
+    id: "TEST-001",
+    status: "ready",
+    priority: "P1",
+    title: "Test task",
+    prompt: "Do the test thing.",
+    acceptance: ["it works"],
+    allowed_paths: ["some/path"],
+    forbidden_paths: [],
+    risks: [],
+    owner_approved: false,
+    release: "no_deploy",
+    result: null,
+    ...overrides,
+  };
+  const file = path.join(dir, `${task.id}.yaml`);
+  fs.writeFileSync(file, JSON.stringify(task, null, 2) + "\n", "utf8");
+  return { file, task };
+}
+
+function isAlive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// --- 1. a new task never inherits an old session --------------------------
+
+test("execute() never passes --continue or --resume, and each stage/task starts an independent fake session", async () => {
+  const { runner, localDir } = freshRunnerEnv();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-task-"));
+  const selected = writeTask(dir, { id: "TEST-ISOLATION", max_duration_minutes: 0.5 });
+  process.env.EGO_OS_FAKE_SCENARIO = "instant_done";
+  process.env.EGO_OS_FAKE_TASK_FILE = selected.file;
+  process.env.EGO_OS_FAKE_HANDOFF_FILE = runner.handoffPathFor(selected.task.id);
+
+  const ok = await runner.execute(selected, 10, 1);
+  assert.equal(ok, true);
+  const finalTask = runner.load(selected.file);
+  assert.equal(finalTask.status, "done");
+  assert.equal(finalTask.result.sessions.length, 1);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(localDir, { recursive: true, force: true });
+});
+
+// --- 2. stages get only handoff, not prior dialogue -----------------------
+
+test("execute() building a stage-2 prompt embeds the handoff but not any transcript/dialogue marker", () => {
+  const { runner } = freshRunnerEnv();
+  const handoff = {
+    summary: "stage 1 added the schema", commit: "abc123", changed_files: ["x.py"],
+    checks: "12 tests passed", remaining: "routes", risks: "none", next_step: "add routes",
+  };
+  const prompt = runner.buildStagePrompt(
+    { id: "T", title: "Title", prompt: "Do it", acceptance: ["ok"], release: "no_deploy" },
+    "tasks/queue/T.yaml", "GIT STATE:\nHEAD: deadbeef\nStatus: (clean)\nRecent commits:\n(none)",
+    1, 3, null, handoff, "/tmp/handoff.json",
+  );
+  assert.match(prompt, /PRIOR STAGE HANDOFF/);
+  assert.match(prompt, /abc123/);
+  // The prompt legitimately explains "not a transcript or a diff" as
+  // reassurance about the handoff's own scope -- the real thing to prove
+  // is that no conversation-log-shaped section is embedded.
+  assert.doesNotMatch(prompt, /CONVERSATION (HISTORY|LOG)/i);
+  assert.doesNotMatch(prompt, /\[assistant\]|\[user\]/i);
+});
+
+test("execute() building the FIRST stage's prompt has no handoff block at all", () => {
+  const { runner } = freshRunnerEnv();
+  const prompt = runner.buildStagePrompt(
+    { id: "T", title: "Title", prompt: "Do it", acceptance: ["ok"], release: "no_deploy" },
+    "tasks/queue/T.yaml", "GIT STATE:\nHEAD: deadbeef\nStatus: (clean)\nRecent commits:\n(none)",
+    0, 1, null, null, "/tmp/handoff.json",
+  );
+  assert.doesNotMatch(prompt, /PRIOR STAGE HANDOFF/);
+});
+
+// --- 3. handoff size limit is enforced by the real stage loop --------------
+
+test("execute() refuses to continue past a timed-out stage when the handoff left behind is invalid/oversized", async () => {
+  const { runner, localDir } = freshRunnerEnv();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-task-"));
+  const selected = writeTask(dir, { id: "TEST-BADHANDOFF", max_duration_minutes: 0.03, max_auto_stages: 2 });
+  const markerFile = path.join(dir, "marker");
+  process.env.EGO_OS_FAKE_SCENARIO = "hang_forever"; // always hangs, never leaves ANY handoff
+  process.env.EGO_OS_FAKE_TASK_FILE = selected.file;
+  process.env.EGO_OS_FAKE_HANDOFF_FILE = runner.handoffPathFor(selected.task.id);
+  process.env.EGO_OS_FAKE_MARKER_FILE = markerFile;
+
+  const ok = await runner.execute(selected, 10, 1);
+  assert.equal(ok, false);
+  const finalTask = runner.load(selected.file);
+  assert.equal(finalTask.status, "failed");
+  assert.match(finalTask.result.runner_error, /no usable handoff/);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(localDir, { recursive: true, force: true });
+});
+
+// --- 4. timeout/checkpoint: a stage that runs out of time correctly hands off --
+
+test("execute() continues into a fresh stage-2 session after stage 1 times out with a valid handoff, and stage 2 completes", async () => {
+  const { runner, localDir } = freshRunnerEnv();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-task-"));
+  const selected = writeTask(dir, { id: "TEST-TIMEOUT-CONTINUE", max_duration_minutes: 0.03, max_auto_stages: 3 });
+  const markerFile = path.join(dir, "marker");
+  process.env.EGO_OS_FAKE_SCENARIO = "hang_once_then_done";
+  process.env.EGO_OS_FAKE_TASK_FILE = selected.file;
+  process.env.EGO_OS_FAKE_HANDOFF_FILE = runner.handoffPathFor(selected.task.id);
+  process.env.EGO_OS_FAKE_MARKER_FILE = markerFile;
+
+  const ok = await runner.execute(selected, 10, 1);
+  assert.equal(ok, true);
+  const finalTask = runner.load(selected.file);
+  assert.equal(finalTask.status, "done");
+  assert.equal(finalTask.result.sessions.length, 2, "expected exactly two distinct sessions (stage 1 timeout + stage 2 completion)");
+  assert.equal(finalTask.result.sessions[0].outcome, "timed_out_or_killed");
+  assert.equal(finalTask.result.sessions[1].outcome, "exited_clean");
+  // Each session got its own log file -- proof they are genuinely separate processes/runs.
+  assert.notEqual(finalTask.result.sessions[0].log, finalTask.result.sessions[1].log);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(localDir, { recursive: true, force: true });
+});
+
+// --- 5. rate-limit -> waiting_for_limit -------------------------------------
+
+test("execute() moves a task to waiting_for_limit (never failed) when the fake reports a rate limit", async () => {
+  const { runner, localDir } = freshRunnerEnv();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-task-"));
+  const selected = writeTask(dir, { id: "TEST-RATELIMIT", max_duration_minutes: 0.5 });
+  process.env.EGO_OS_FAKE_SCENARIO = "rate_limited";
+  process.env.EGO_OS_FAKE_TASK_FILE = selected.file;
+  process.env.EGO_OS_FAKE_HANDOFF_FILE = runner.handoffPathFor(selected.task.id);
+
+  const ok = await runner.execute(selected, 10, 1);
+  assert.equal(ok, true, "a rate limit is a legitimate pause, not a failure");
+  const finalTask = runner.load(selected.file);
+  assert.equal(finalTask.status, "waiting_for_limit");
+  assert.ok(finalTask.result.retry_after);
+  assert.ok(Date.parse(finalTask.result.retry_after) > Date.now());
+
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(localDir, { recursive: true, force: true });
+});
+
+// --- 6. safe resumption: nextTask() respects retry_after -------------------
+
+test("nextTask() skips a waiting_for_limit task before retry_after and picks it up after", () => {
+  const { localDir } = freshRunnerEnv();
+  const queueDir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-queue-"));
+  process.env.EGO_OS_RUNNER_QUEUE_DIR = queueDir;
+  delete require.cache[require.resolve("./claude_task_runner.js")];
+  const runner2 = require("./claude_task_runner.js");
+
+  const future = new Date(Date.now() + 3600000).toISOString();
+  writeTask(queueDir, { id: "TEST-WAIT-FUTURE", status: "waiting_for_limit", result: { retry_after: future } });
+  const notYetDue = runner2.nextTask();
+  assert.equal(notYetDue, null, "must not pick up a task whose limit has not reset yet");
+
+  const past = new Date(Date.now() - 1000).toISOString();
+  fs.writeFileSync(
+    path.join(queueDir, "TEST-WAIT-FUTURE.yaml"),
+    JSON.stringify({ ...runner2.load(path.join(queueDir, "TEST-WAIT-FUTURE.yaml")), status: "waiting_for_limit", result: { retry_after: past } }, null, 2),
+  );
+  const due = runner2.nextTask();
+  assert.ok(due, "must pick up the task once its retry_after has passed");
+  assert.equal(due.task.id, "TEST-WAIT-FUTURE");
+
+  fs.rmSync(queueDir, { recursive: true, force: true });
+  fs.rmSync(localDir, { recursive: true, force: true });
+  delete process.env.EGO_OS_RUNNER_QUEUE_DIR;
+});
+
+// --- 7. no orphan processes survive a timed-out stage -----------------------
+
+test("execute() leaves no orphaned fake_claude/node process after a stage times out (tree-kill works)", async () => {
+  const { runner, localDir } = freshRunnerEnv();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-task-"));
+  const selected = writeTask(dir, { id: "TEST-ORPHAN", max_duration_minutes: 0.03, max_auto_stages: 1 });
+  const markerFile = path.join(dir, "marker");
+  process.env.EGO_OS_FAKE_SCENARIO = "hang_forever";
+  process.env.EGO_OS_FAKE_TASK_FILE = selected.file;
+  process.env.EGO_OS_FAKE_HANDOFF_FILE = runner.handoffPathFor(selected.task.id);
+  process.env.EGO_OS_FAKE_MARKER_FILE = markerFile;
+
+  await runner.execute(selected, 10, 1);
+
+  // execute() only resolves once runClaude's own 'close' handler (and its
+  // own final tree-kill safety net) has already run -- a short extra
+  // grace period just lets the OS process table settle before we check.
+  await new Promise((r) => setTimeout(r, 500));
+  assert.ok(fs.existsSync(markerFile), "the fake should have recorded its grandchild's pid before hanging");
+  const grandchildPid = Number(fs.readFileSync(markerFile, "utf8").trim());
+  assert.equal(isAlive(grandchildPid), false, "the grandchild must not survive -- tree-kill must clean up the whole process tree, not just the direct child");
+
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(localDir, { recursive: true, force: true });
+});
+
+// --- 8. old-style YAML tasks (no new fields) still work ---------------------
+
+test("execute() runs a pre-TOKEN-EFFICIENCY-001-shaped task (no checkpoints/model/max_duration_minutes) as a single session, unchanged", async () => {
+  const { runner, localDir } = freshRunnerEnv();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-task-"));
+  // Deliberately omits every new optional field -- matches every task file
+  // already in tasks/queue/ before this change.
+  const selected = writeTask(dir, { id: "TEST-BACKCOMPAT" });
+  process.env.EGO_OS_FAKE_SCENARIO = "instant_done";
+  process.env.EGO_OS_FAKE_TASK_FILE = selected.file;
+  process.env.EGO_OS_FAKE_HANDOFF_FILE = runner.handoffPathFor(selected.task.id);
+
+  const ok = await runner.execute(selected, 10, 1);
+  assert.equal(ok, true);
+  const finalTask = runner.load(selected.file);
+  assert.equal(finalTask.status, "done");
+  assert.equal(finalTask.result.sessions.length, 1, "an old-style task with no timeout still completes in exactly one session");
+
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(localDir, { recursive: true, force: true });
+});
+
+test("execute() honors context_strategy:'single' as an explicit opt-out of auto-staging", async () => {
+  const { runner, localDir } = freshRunnerEnv();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-task-"));
+  const selected = writeTask(dir, { id: "TEST-SINGLE-STRATEGY", context_strategy: "single", max_duration_minutes: 0.03 });
+  const markerFile = path.join(dir, "marker");
+  process.env.EGO_OS_FAKE_SCENARIO = "hang_forever";
+  process.env.EGO_OS_FAKE_TASK_FILE = selected.file;
+  process.env.EGO_OS_FAKE_HANDOFF_FILE = runner.handoffPathFor(selected.task.id);
+  process.env.EGO_OS_FAKE_MARKER_FILE = markerFile;
+
+  const ok = await runner.execute(selected, 10, 1);
+  assert.equal(ok, false);
+  const finalTask = runner.load(selected.file);
+  assert.equal(finalTask.result.sessions.length, 1, "context_strategy:'single' must never auto-stage, even on timeout");
+
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(localDir, { recursive: true, force: true });
+});
+
+// --- 9. global sweep: nothing from ANY test in this file is left running ---
+// (not just the one test that explicitly checks its own marker PID --
+// every hang_forever/hang_once_then_done scenario above spawns a real
+// fake_claude.js + grandchild, and this is the actual A2 success
+// criterion: zero orphaned processes after the WHOLE run, not just one
+// specific case of it.)
+
+test("no fake_claude/setInterval process from any test in this file is still running", () => {
+  const cpMod = require("child_process");
+  // Filtered to Name='node.exe' specifically -- this PowerShell query
+  // itself is powershell.exe, not node.exe, so it can never self-match.
+  const result = cpMod.spawnSync("powershell", [
+    "-NoProfile", "-Command",
+    "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Where-Object { $_.CommandLine -match 'fake_claude' -or $_.CommandLine -match 'setInterval' } | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+  ], { encoding: "utf8" });
+  const stdout = (result.stdout || "").trim();
+  const survivors = stdout ? (Array.isArray(JSON.parse(stdout)) ? JSON.parse(stdout) : [JSON.parse(stdout)]) : [];
+  assert.deepEqual(survivors, [], `expected zero surviving test processes, found: ${JSON.stringify(survivors)}`);
+});
