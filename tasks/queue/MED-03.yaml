@@ -1,0 +1,31 @@
+{
+  "id": "MED-03",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Multi-Executor Dispatch: openrouter_free lightweight executor",
+  "display_summary": "Подключаем бесплатные модели для простых задач",
+  "prompt": "Per architecture/017_MULTI_EXECUTOR_DISPATCH.md's tier-0 contract, implement automation/openrouter_task_runner.js: a small, non-agentic script for executor:'openrouter_free' tasks. It must (1) verify task.executor === 'openrouter_free', (2) verify every one of task.allowed_paths falls strictly inside docs/, product_bible/, CHANGELOG.md, or a read-only log/status path -- refuse the task loudly (status 'failed', clear result.runner_error) BEFORE ever calling any model if not, (3) query OpenRouter's /api/v1/models endpoint live to find current free-tier (':free' suffix) models rather than hardcoding a remembered model id (the free catalog changes over time), (4) call chat completions with the task prompt using OPENROUTER_API_KEY from .env (same auth pattern as ego_os/model_provider.py's _get_client(), do not duplicate its logic -- factor a shared helper if practical, or call the same env var directly), (5) write the result only to the allowed doc paths and commit it by REUSING claude_task_runner.js's existing git preflight/commitRunnerState helpers (import, don't re-implement).",
+  "acceptance": [
+    "A task with executor:'openrouter_free' and any allowed_paths entry outside docs/, product_bible/, or CHANGELOG.md is refused before any OpenRouter API call is made",
+    "A valid in-scope task successfully calls a real, currently-free-tier OpenRouter model (verified live against /api/v1/models, not assumed) and produces a committed doc change",
+    "Never touches ego_os/, automation/, or any test file -- enforced in code, not just prompt discipline",
+    "Reuses claude_task_runner.js's existing git safety/commit helpers rather than duplicating them",
+    "Unit tests cover the scope-boundary rejection and the free-model-catalog lookup with mocked HTTP -- no real network call in the test suite, matching this repo's existing test discipline (tests never call a real external API)"
+  ],
+  "allowed_paths": [
+    "automation/openrouter_task_runner.js",
+    "automation/openrouter_task_runner.test.js"
+  ],
+  "forbidden_paths": [
+    "ego_os/",
+    "automation/claude_task_runner.js",
+    "automation/session_manager.js",
+    "automation/control_server.js"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["RCI-02"],
+  "estimated_minutes": 90,
+  "result": null
+}

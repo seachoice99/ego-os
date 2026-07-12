@@ -1,0 +1,34 @@
+{
+  "id": "MED-02",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Multi-Executor Dispatch: real Codex invocation path",
+  "display_summary": "Учим раннер по-настоящему запускать Codex",
+  "prompt": "Per architecture/017_MULTI_EXECUTOR_DISPATCH.md, generalize automation/session_manager.js's claudeInvocationArgs() into a buildInvocationArgs(executor, {maxTurns, model}) that branches per executor; add EXECUTOR_BINARIES = { claude: CLAUDE, codex: process.env.EGO_OS_RUNNER_CODEX_PATH || 'codex' } in automation/claude_task_runner.js; split FATAL_PATTERNS/classifyFatalOutput/detectRateLimit into an EXECUTOR_FATAL_PATTERNS[executor] map, with the codex entry sourced strictly from automation/CODEX_CLI_FINDINGS.md (MED-01's real findings) -- never invented. If MED-01's findings document that Codex CLI could not be verified installed/usable, this task must set its OWN status to 'blocked' citing that gap (per tasks/queue/README.md's 'blocked as a legitimate, non-failure terminal state' precedent) rather than fabricate unverified flags or patterns. Add a fake_codex.js test fixture mirroring automation/test_fixtures/fake_claude.js for integration tests -- never spawn a real Codex process in tests.",
+  "acceptance": [
+    "execute() successfully dispatches executor:'codex' tasks to the codex binary constant, using flags/output-parsing sourced from and cited to automation/CODEX_CLI_FINDINGS.md",
+    "A new fake_codex.js fixture is used for all codex-path integration tests, never a real Codex process",
+    "Rate-limit and auth-failure detection for codex reuses the existing decideNextAction/classifySessionOutcome pipeline, with a codex-specific pattern set clearly separated from claude's",
+    "All existing claude-path tests continue to pass unchanged (zero regression)",
+    "If CODEX_CLI_FINDINGS.md indicates Codex CLI flags/signals could not be verified, this task sets its own status to 'blocked' with a clear reason instead of guessing"
+  ],
+  "allowed_paths": [
+    "automation/session_manager.js",
+    "automation/claude_task_runner.js",
+    "automation/session_manager.test.js",
+    "automation/claude_task_runner.test.js",
+    "automation/test_fixtures/fake_codex.js"
+  ],
+  "forbidden_paths": [
+    "ego_os/",
+    "automation/control_server.js",
+    "automation/runner_control.js",
+    "automation/web/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["RCI-02", "MED-01"],
+  "estimated_minutes": 90,
+  "result": null
+}

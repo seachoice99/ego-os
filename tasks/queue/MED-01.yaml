@@ -1,0 +1,30 @@
+{
+  "id": "MED-01",
+  "status": "ready",
+  "priority": "P1",
+  "title": "Multi-Executor Dispatch: Codex CLI recon (read-only)",
+  "display_summary": "Проверяем, что вообще умеет Codex, ничего не ломая",
+  "prompt": "Check whether the OpenAI Codex CLI is installed on this machine (e.g. `command -v codex` / `Get-Command codex`, `codex --version`). If NOT installed: document that fact plus the official install command per OpenAI's own docs, and explicitly recommend owner-approved installation as a prerequisite for MED-02 -- do NOT install it yourself in this task (installing new global software is out of this task's scope). If installed: run `codex --help` and probe for its non-interactive/headless invocation mode (look for something like an `exec`/`-p`/`--non-interactive`/`--full-auto` style flag set), capture REAL observed output -- never a flag or output format guessed from memory or training data. Document the exact binary name, the exact non-interactive invocation flags, the output format (plain text vs a structured/JSON stream), and how a rate-limit condition and an auth/subscription failure actually surface (exit code, stderr substring, or a structured event) based only on what you actually observed. Never pass any flag that would let Codex actually edit files or make non-diagnostic network calls during this recon -- `--help`/`--version`/read-only probes only. Write findings to automation/CODEX_CLI_FINDINGS.md.",
+  "acceptance": [
+    "automation/CODEX_CLI_FINDINGS.md exists and states clearly whether the Codex CLI was found installed on this machine",
+    "If installed: documents the exact non-interactive invocation command/flags, real captured output samples (with any secrets redacted), and how rate-limit/auth-failure conditions actually surface -- all cited as directly observed, not assumed",
+    "If not installed: documents the official install command and explicitly flags owner-approved installation as a prerequisite for MED-02, without performing the install itself",
+    "No file other than automation/CODEX_CLI_FINDINGS.md is created or modified",
+    "No Codex CLI invocation performed during this task is given any flag that would allow it to write to the filesystem or make a non-diagnostic network call"
+  ],
+  "allowed_paths": [
+    "automation/CODEX_CLI_FINDINGS.md"
+  ],
+  "forbidden_paths": [
+    "ego_os/",
+    "memory/decisions/",
+    "architecture/",
+    "tasks/queue/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": [],
+  "estimated_minutes": 30,
+  "result": null
+}

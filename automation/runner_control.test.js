@@ -224,6 +224,21 @@ test("summarizeTask never throws on a task with no result yet", () => {
   assert.equal(summary.blocked_reason, null);
 });
 
+test("summarizeTask attaches a casual project group and falls back display_summary to title", () => {
+  const summary = summarizeTask({ id: "MED-01", title: "Codex CLI recon", priority: "P1", status: "ready", release: "no_deploy" });
+  assert.equal(summary.group_key, "multi-executor");
+  assert.equal(summary.group_name, "Клод + Кодекс работают вместе");
+  assert.equal(summary.display_summary, "Codex CLI recon");
+});
+
+test("summarizeTask prefers an explicit display_summary over title", () => {
+  const summary = summarizeTask({
+    id: "MED-01", title: "Codex CLI recon", display_summary: "Проверяем, что вообще умеет Codex",
+    priority: "P1", status: "ready", release: "no_deploy",
+  });
+  assert.equal(summary.display_summary, "Проверяем, что вообще умеет Codex");
+});
+
 // --- secret masking (logs panel) ------------------------------------------
 
 test("maskSecrets redacts an Anthropic-shaped API key and a Bearer token", () => {

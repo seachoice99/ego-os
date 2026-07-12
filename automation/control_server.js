@@ -307,6 +307,25 @@ function handleEvents(req, res, query) {
   sendJson(res, 200, { events: readEvents(limit) });
 }
 
+// Casual dashboard's limits panel. Read-only reflection of
+// runner.USAGE_FILE (written by claude_task_runner.js's recordSessionUsage()
+// after each finished session, parsed from that session's own free,
+// already-emitted final result line -- never a live query, never a guess).
+// A codex/claude entry with total_sessions: 0 means "no data yet", rendered
+// by the dashboard as an honest "no data" state, never a fabricated number.
+function handleUsage(req, res) {
+  const usage = runner.readUsageTracker();
+  // Enriches the session-cost-derived "codex" entry (always empty today --
+  // no real Codex session has ever run, see architecture/017) with the
+  // latest REAL rate-limit snapshot from automation/codex_usage.js, when
+  // one exists. This is the one place Codex limits actually become
+  // visible in the runner's own UI, independent of whether any Codex
+  // session has ever executed.
+  const latestCodex = runner.readLatestCodexUsageSnapshot();
+  if (latestCodex) usage.codex = { ...usage.codex, rate_limits: latestCodex };
+  sendJson(res, 200, { usage });
+}
+
 function handleLogs(req, res, query) {
   const requested = query.get("file");
   if (!requested) return sendJson(res, 400, { error: "missing required 'file' query parameter" });
@@ -602,6 +621,7 @@ async function router(req, res) {
     if (req.method === "GET" && parts[0] === "api" && parts[1] === "tasks" && parts.length === 3) return handleTaskDetail(req, res, parts[2]);
     if (req.method === "GET" && url.pathname === "/api/events") return handleEvents(req, res, url.searchParams);
     if (req.method === "GET" && url.pathname === "/api/logs") return handleLogs(req, res, url.searchParams);
+    if (req.method === "GET" && url.pathname === "/api/usage") return handleUsage(req, res);
 
     if (req.method === "POST" && parts[0] === "api" && parts[1] === "runner" && parts.length === 3) {
       const command = { start: "start", pause: "pause", resume: "resume", "stop-after-stage": "stop_after_stage", "emergency-stop": "emergency_stop" }[parts[2]];

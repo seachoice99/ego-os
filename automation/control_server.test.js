@@ -124,6 +124,57 @@ test("GET /api/tasks lists queued tasks in the summarized shape, no secrets, no 
   teardown(env);
 });
 
+test("GET /api/tasks attaches a casual project group and display_summary for the dashboard's card view", async () => {
+  const env = await freshServerEnv();
+  writeTask(env.queueDir, { id: "MED-99", title: "Some technical title" });
+  const res = await fetch(`${env.base}/api/tasks`);
+  const body = await res.json();
+  const found = body.tasks.find((t) => t.id === "MED-99");
+  assert.equal(found.group_key, "multi-executor");
+  assert.equal(found.display_summary, "Some technical title", "falls back to title when display_summary is absent");
+  teardown(env);
+});
+
+test("GET /api/usage returns an honest empty tracker before any session has ever run", async () => {
+  const env = await freshServerEnv();
+  const res = await fetch(`${env.base}/api/usage`);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.usage.claude.total_sessions, 0);
+  assert.equal(body.usage.codex.total_sessions, 0);
+  teardown(env);
+});
+
+test("GET /api/usage reflects a session recorded by recordSessionUsage", async () => {
+  const env = await freshServerEnv();
+  env.runner.recordSessionUsage(
+    { id: "TEST-QUEUE-1" },
+    JSON.stringify({ type: "result", total_cost_usd: 0.05, usage: { input_tokens: 10, output_tokens: 20 } }),
+  );
+  const res = await fetch(`${env.base}/api/usage`);
+  const body = await res.json();
+  assert.equal(body.usage.claude.total_sessions, 1);
+  assert.ok(Math.abs(body.usage.claude.total_cost_usd - 0.05) < 1e-9);
+  teardown(env);
+});
+
+test("GET /api/usage enriches codex with the latest real rate-limit snapshot when one has been logged", async () => {
+  const fakeCodex = path.join(__dirname, "test_fixtures", process.platform === "win32" ? "fake_codex_app_server.cmd" : "fake_codex_app_server.js");
+  process.env.EGO_OS_CODEX_APP_SERVER_PATH = fakeCodex;
+  process.env.EGO_OS_FAKE_CODEX_SCENARIO = "full_response";
+  delete require.cache[require.resolve("./codex_usage.js")];
+  const env = await freshServerEnv();
+  await env.runner.snapshotCodexUsageIfNeeded({ id: "TEST-QUEUE-1", status: "done" }, "codex");
+  const res = await fetch(`${env.base}/api/usage`);
+  const body = await res.json();
+  assert.ok(body.usage.codex.rate_limits);
+  assert.equal(body.usage.codex.rate_limits.task_id, "TEST-QUEUE-1");
+  assert.equal(body.usage.codex.rate_limits.status, "available");
+  delete process.env.EGO_OS_CODEX_APP_SERVER_PATH;
+  delete process.env.EGO_OS_FAKE_CODEX_SCENARIO;
+  teardown(env);
+});
+
 // --- path traversal defenses ---------------------------------------------
 
 test("GET /api/tasks/:id rejects a path-traversal id instead of resolving it", async () => {

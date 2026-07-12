@@ -17,6 +17,7 @@ const cp = require("child_process");
 
 const FIXTURES = path.join(__dirname, "test_fixtures");
 const FAKE_CLAUDE = path.join(FIXTURES, "fake_claude.cmd");
+const FAKE_CODEX = path.join(FIXTURES, process.platform === "win32" ? "fake_codex_app_server.cmd" : "fake_codex_app_server.js");
 
 // preflight() runs real (read-only after setup) git checks -- status,
 // fetch, rev-parse, branch. Rather than depending on THIS checkout's
@@ -62,6 +63,24 @@ function freshRunnerEnv() {
   delete require.cache[require.resolve("./claude_task_runner.js")];
   const runner = require("./claude_task_runner.js");
   return { runner, localDir };
+}
+
+// Same as freshRunnerEnv(), but also points the Codex-usage snapshot path
+// (automation/codex_usage.js) at the fake app-server fixture, and clears
+// its require cache too -- its CODEX_BINARY constant is only computed once
+// from EGO_OS_CODEX_APP_SERVER_PATH at module load time.
+function freshRunnerEnvWithCodex(codexScenario) {
+  process.env.EGO_OS_CODEX_APP_SERVER_PATH = FAKE_CODEX;
+  process.env.EGO_OS_FAKE_CODEX_SCENARIO = codexScenario || "full_response";
+  process.env.EGO_OS_RUNNER_FORCE_EXECUTOR = "codex";
+  delete require.cache[require.resolve("./codex_usage.js")];
+  return freshRunnerEnv();
+}
+
+function clearCodexEnv() {
+  delete process.env.EGO_OS_CODEX_APP_SERVER_PATH;
+  delete process.env.EGO_OS_FAKE_CODEX_SCENARIO;
+  delete process.env.EGO_OS_RUNNER_FORCE_EXECUTOR;
 }
 
 function writeTask(dir, overrides) {
@@ -593,6 +612,125 @@ test("killProcessTree() on non-Windows walks the full descendant tree and SIGKIL
     Object.defineProperty(process, "platform", originalPlatform);
     delete require.cache[require.resolve("./claude_task_runner.js")];
   }
+});
+
+// --- Codex usage snapshot (runner-level wiring) ---------------------------
+
+test("a Codex-usage snapshot never fires for today's real default (executor 'claude'), even though the fake codex is configured", async () => {
+  const { runner, localDir } = freshRunnerEnvWithCodex("full_response");
+  delete process.env.EGO_OS_RUNNER_FORCE_EXECUTOR; // simulate today's real, unforced default
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-task-"));
+  const selected = writeTask(dir, { id: "TEST-NOT-CODEX" });
+  process.env.EGO_OS_FAKE_SCENARIO = "instant_done";
+  process.env.EGO_OS_FAKE_TASK_FILE = selected.file;
+  process.env.EGO_OS_FAKE_HANDOFF_FILE = runner.handoffPathFor(selected.task.id);
+
+  const ok = await runner.execute(selected, 10, 1);
+  assert.equal(ok, true);
+  assert.equal(fs.existsSync(runner.CODEX_USAGE_LOG_FILE), false, "no Codex session ever ran, so no snapshot should ever be attempted");
+
+  clearCodexEnv();
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(localDir, { recursive: true, force: true });
+});
+
+test("a Codex-usage snapshot fires after a DONE task, is logged outside the repo, and never changes the task's own outcome", async () => {
+  const { runner, localDir } = freshRunnerEnvWithCodex("full_response");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-task-"));
+  const selected = writeTask(dir, { id: "TEST-CODEX-DONE" });
+  process.env.EGO_OS_FAKE_SCENARIO = "instant_done";
+  process.env.EGO_OS_FAKE_TASK_FILE = selected.file;
+  process.env.EGO_OS_FAKE_HANDOFF_FILE = runner.handoffPathFor(selected.task.id);
+
+  const ok = await runner.execute(selected, 10, 1);
+  assert.equal(ok, true, "a snapshot failure/success must never change execute()'s own return value");
+  const finalTask = runner.load(selected.file);
+  assert.equal(finalTask.status, "done", "the task's own outcome is unaffected by the Codex-usage snapshot");
+
+  assert.equal(fs.existsSync(runner.CODEX_USAGE_LOG_FILE), true);
+  const lines = fs.readFileSync(runner.CODEX_USAGE_LOG_FILE, "utf8").trim().split("\n");
+  const entry = JSON.parse(lines[lines.length - 1]);
+  assert.equal(entry.task_id, "TEST-CODEX-DONE");
+  assert.equal(entry.task_status, "done");
+  assert.equal(entry.status, "available");
+
+  // Never inside the git-tracked repo, never touches its working tree.
+  assert.ok(!runner.CODEX_USAGE_LOG_FILE.startsWith(FAKE_REPO.workDir));
+  const status = git(["status", "--porcelain"], FAKE_REPO.workDir);
+  assert.equal(status.trim(), "", "the codex-usage.jsonl write must never dirty the repo's own working tree");
+
+  clearCodexEnv();
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(localDir, { recursive: true, force: true });
+});
+
+test("a Codex-usage snapshot also fires after a BLOCKED task", async () => {
+  const { runner, localDir } = freshRunnerEnvWithCodex("low");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-task-"));
+  const selected = writeTask(dir, { id: "TEST-CODEX-BLOCKED" });
+  process.env.EGO_OS_FAKE_SCENARIO = "instant_blocked";
+  process.env.EGO_OS_FAKE_TASK_FILE = selected.file;
+  process.env.EGO_OS_FAKE_HANDOFF_FILE = runner.handoffPathFor(selected.task.id);
+
+  const ok = await runner.execute(selected, 10, 1);
+  assert.equal(ok, true);
+  assert.equal(runner.load(selected.file).status, "blocked");
+
+  const lines = fs.readFileSync(runner.CODEX_USAGE_LOG_FILE, "utf8").trim().split("\n");
+  const entry = JSON.parse(lines[lines.length - 1]);
+  assert.equal(entry.task_id, "TEST-CODEX-BLOCKED");
+  assert.equal(entry.task_status, "blocked");
+  assert.equal(entry.status, "low");
+
+  clearCodexEnv();
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(localDir, { recursive: true, force: true });
+});
+
+test("a Codex-usage snapshot fires with task_status 'failed' too, and an unreadable/unknown snapshot never throws or blocks the queue", async () => {
+  // A real snapshot failure (here: the fake app-server's own JSON-RPC error
+  // on account/rateLimits/read) must still produce a logged, non-throwing
+  // 'unknown' entry -- proving a broken Codex read can never stop the queue
+  // or corrupt an already-decided task outcome. Uses the fake fixture's
+  // fast error path rather than a real timeout, to keep this test quick.
+  const { runner: freshRunner, localDir } = freshRunnerEnvWithCodex("error_on_ratelimits");
+
+  await assert.doesNotReject(freshRunner.snapshotCodexUsageIfNeeded({ id: "TEST-CODEX-FAILED", status: "failed" }, "codex"));
+  const lines = fs.readFileSync(freshRunner.CODEX_USAGE_LOG_FILE, "utf8").trim().split("\n");
+  const entry = JSON.parse(lines[lines.length - 1]);
+  assert.equal(entry.task_id, "TEST-CODEX-FAILED");
+  assert.equal(entry.task_status, "failed");
+  assert.equal(entry.status, "unknown");
+  assert.ok(entry.error);
+
+  clearCodexEnv();
+  fs.rmSync(localDir, { recursive: true, force: true });
+});
+
+test("--dry-run never touches the Codex-usage log, even with a Codex task next in the queue", async () => {
+  const { runner: setupRunner, localDir } = freshRunnerEnvWithCodex("full_response");
+  const queueDir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-queue-"));
+  process.env.EGO_OS_RUNNER_QUEUE_DIR = queueDir;
+  delete require.cache[require.resolve("./claude_task_runner.js")];
+  const runner = require("./claude_task_runner.js");
+  writeTask(queueDir, { id: "TEST-DRYRUN" });
+
+  const prevArgv = process.argv;
+  process.argv = [prevArgv[0], prevArgv[1], "--dry-run"];
+  let code;
+  try {
+    code = await runner.main();
+  } finally {
+    process.argv = prevArgv;
+  }
+  assert.equal(code, 0);
+  assert.equal(fs.existsSync(runner.CODEX_USAGE_LOG_FILE), false, "--dry-run must never spawn codex app-server (execute() is never called on this path)");
+
+  delete process.env.EGO_OS_RUNNER_QUEUE_DIR;
+  clearCodexEnv();
+  fs.rmSync(queueDir, { recursive: true, force: true });
+  fs.rmSync(localDir, { recursive: true, force: true });
+  void setupRunner;
 });
 
 test("no fake_claude/setInterval process from any test in this file is still running", () => {
