@@ -16,6 +16,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const cp = require("child_process");
+const crypto = require("crypto");
 
 const runner = require("./claude_task_runner.js");
 const {
@@ -27,6 +28,11 @@ const {
   validateReorder,
   summarizeTask,
   maskSecrets,
+  isLeaseExpired,
+  buildLease,
+  isReplayedRequest,
+  isAgentOnline,
+  AGENT_LEASE_MINUTES_DEFAULT,
 } = require("./runner_control.js");
 
 const HOST = "127.0.0.1";
@@ -36,6 +42,98 @@ const WEB_DIR = process.env.EGO_OS_CONTROL_WEB_DIR || path.join(__dirname, "web"
 const CONTROL_LOCK = process.env.EGO_OS_CONTROL_LOCK || path.join(path.dirname(runner.LOCK), "ego-os-control-server.lock");
 const LOG_LINE_LIMIT = 500;
 const EVENTS_LIMIT_DEFAULT = 200;
+
+// --- Windows Runner Agent coordination -------------------------------------
+// Claude Code cannot run on this VPS (confirmed external blocker). This
+// server no longer executes any task itself -- it hands one task at a time
+// to a remote agent (the Owner's own Windows machine) over the same
+// loopback-bound HTTP surface, authenticated by a SEPARATE token (never
+// Owner Basic Auth, which is a human credential, not a machine one).
+const AGENT_TOKEN_FILE = process.env.EGO_OS_AGENT_TOKEN_FILE || path.join(runner.CONTROL_DIR, "agent_token");
+const AGENTS_FILE = process.env.EGO_OS_AGENTS_FILE || path.join(runner.CONTROL_DIR, "agents.json");
+const PRODUCTION_DIR = process.env.EGO_OS_PRODUCTION_DIR || "/opt/ego-os";
+const PRODUCTION_USER = process.env.EGO_OS_PRODUCTION_USER || "egoos";
+const PRODUCTION_SERVICE = process.env.EGO_OS_PRODUCTION_SERVICE || "ego-os";
+
+function getOrCreateAgentToken() {
+  try {
+    const existing = fs.readFileSync(AGENT_TOKEN_FILE, "utf8").trim();
+    if (existing) return existing;
+  } catch { /* not created yet */ }
+  fs.mkdirSync(path.dirname(AGENT_TOKEN_FILE), { recursive: true });
+  const token = crypto.randomBytes(32).toString("hex");
+  fs.writeFileSync(AGENT_TOKEN_FILE, token, { mode: 0o600 });
+  // Shown exactly once, at the moment of creation, for the Owner to copy
+  // into the agent's own credential store -- never logged again after this.
+  console.log(`Generated new Windows agent token (copy this now, it will not be shown again): ${token}`);
+  return token;
+}
+
+function readAgents() {
+  try { return JSON.parse(fs.readFileSync(AGENTS_FILE, "utf8")); } catch { return {}; }
+}
+
+function writeAgents(agents) {
+  fs.mkdirSync(path.dirname(AGENTS_FILE), { recursive: true });
+  fs.writeFileSync(AGENTS_FILE, JSON.stringify(agents, null, 2), "utf8");
+}
+
+function timingSafeTokenEqual(a, b) {
+  const bufA = Buffer.from(String(a || ""));
+  const bufB = Buffer.from(String(b || ""));
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+function authenticateAgentToken(req) {
+  const authHeader = req.headers["authorization"] || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  // getOrCreateAgentToken() must run unconditionally -- if it were only
+  // reached via the right side of `!token || ...`, short-circuit evaluation
+  // would skip it on any unauthenticated request, so the token file would
+  // never be created until someone already had a (possibly wrong) token to
+  // send, a chicken-and-egg gap that leaves the Owner with no way to obtain
+  // it in the first place.
+  const expected = getOrCreateAgentToken();
+  if (!token || !timingSafeTokenEqual(token, expected)) {
+    return { ok: false, status: 401, error: "invalid or missing agent token" };
+  }
+  return { ok: true };
+}
+
+// Full auth for every agent route except register: token + a known
+// agent_id + a strictly-increasing seq (replay/reuse defense -- see
+// runner_control.isReplayedRequest). Never trusts agent_id/seq as
+// anything other than plain values -- no code path evaluates them.
+function authenticateAgentRequest(req, body) {
+  const tokenCheck = authenticateAgentToken(req);
+  if (!tokenCheck.ok) return tokenCheck;
+  const agentId = typeof body.agent_id === "string" ? body.agent_id : null;
+  if (!agentId || !/^[a-f0-9-]{8,64}$/i.test(agentId)) {
+    return { ok: false, status: 400, error: "invalid agent_id" };
+  }
+  const seq = Number(body.seq);
+  const agents = readAgents();
+  const existing = agents[agentId];
+  if (!existing) return { ok: false, status: 404, error: "unknown agent_id -- register first" };
+  if (isReplayedRequest(seq, existing.last_seq)) {
+    return { ok: false, status: 409, error: "replayed or out-of-order request (seq too low)" };
+  }
+  return { ok: true, agentId, seq, agents, existing };
+}
+
+function touchAgent(agents, agentId, seq, extra = {}) {
+  const now = new Date().toISOString();
+  const prior = agents[agentId] || { registered_at: now, name: null, last_seq: 0 };
+  agents[agentId] = {
+    ...prior,
+    ...extra,
+    last_seq: Number.isFinite(seq) && seq > (prior.last_seq || 0) ? seq : prior.last_seq,
+    last_heartbeat_at: now,
+  };
+  writeAgents(agents);
+  return agents[agentId];
+}
 
 function isProcessAlive(pid) {
   if (!pid) return false;
@@ -160,10 +258,24 @@ function serveStatic(req, res, urlPath) {
 
 // --- route handlers -----------------------------------------------------
 
+function summarizeAgents() {
+  const agents = readAgents();
+  const now = Date.now();
+  return Object.entries(agents).map(([agent_id, a]) => ({
+    agent_id,
+    name: a.name || null,
+    online: isAgentOnline(a.last_heartbeat_at, now),
+    last_heartbeat_at: a.last_heartbeat_at || null,
+    status: a.status || null,
+    executor: a.executor || null,
+  }));
+}
+
 function handleStatus(req, res) {
   const state = readRunnerState();
   const tasks = runner.listTasks().map((x) => summarizeTask(x.task));
   const current = tasks.find((t) => t.id === state.current_task_id) || null;
+  const agents = summarizeAgents();
   sendJson(res, 200, {
     runner_state: state.state,
     updated_at: state.updated_at,
@@ -171,6 +283,8 @@ function handleStatus(req, res) {
     runner_actually_running: isRunnerActuallyRunning(),
     current_task: current,
     reason: state.reason || null,
+    agents,
+    any_agent_online: agents.some((a) => a.online),
   });
 }
 
@@ -212,6 +326,19 @@ async function handleRunnerCommand(req, res, command) {
   let body = {};
   try { body = await readJsonBody(req); } catch (e) { return sendJson(res, e.status || 400, { error: e.message }); }
   if (command === "start") {
+    // A registered Windows agent is always already polling once its own
+    // Task Scheduler entry has launched it -- there is no local process to
+    // spawn on this box anymore (Claude Code cannot run here). "Start"
+    // then just means "if paused, resume" -- the SAME queued-command path
+    // pause/resume/etc. already use, picked up by the agent's own
+    // heartbeat poll rather than a local commands.json read. Only when NO
+    // agent has ever registered does the original local-spawn behavior
+    // apply, preserving this server's original (pre-agent) local-testing
+    // use unchanged.
+    if (Object.keys(readAgents()).length > 0) {
+      writeCommand("resume");
+      return sendJson(res, 202, { ok: true, command: "start", note: "no local process to start -- queued a resume for the Windows agent's next heartbeat poll" });
+    }
     const result = startRunnerEngine();
     return sendJson(res, result.ok ? 200 : 409, result);
   }
@@ -276,6 +403,186 @@ async function handleReorder(req, res) {
   sendJson(res, 200, { ok: true, order });
 }
 
+// --- agent route handlers -------------------------------------------------
+
+async function handleAgentRegister(req, res) {
+  let body = {};
+  try { body = await readJsonBody(req); } catch (e) { return sendJson(res, e.status || 400, { error: e.message }); }
+  const tokenCheck = authenticateAgentToken(req);
+  if (!tokenCheck.ok) return sendJson(res, tokenCheck.status, { error: tokenCheck.error });
+  const agents = readAgents();
+  // Idempotent: an agent restarting reuses its own previously-issued id
+  // (if it still remembers it and the server still knows it) rather than
+  // minting a new identity every reboot.
+  const requested = typeof body.agent_id === "string" ? body.agent_id : null;
+  const agentId = requested && agents[requested] ? requested : crypto.randomUUID();
+  const name = typeof body.name === "string" ? body.name.slice(0, 100) : "windows-agent";
+  touchAgent(agents, agentId, 0, { name, registered_at: (agents[agentId] && agents[agentId].registered_at) || new Date().toISOString() });
+  sendJson(res, 200, { ok: true, agent_id: agentId });
+}
+
+async function handleAgentHeartbeat(req, res) {
+  let body = {};
+  try { body = await readJsonBody(req); } catch (e) { return sendJson(res, e.status || 400, { error: e.message }); }
+  const auth = authenticateAgentRequest(req, body);
+  if (!auth.ok) return sendJson(res, auth.status, { error: auth.error });
+  touchAgent(auth.agents, auth.agentId, auth.seq, {
+    executor: "claude",
+    status: typeof body.status === "string" ? body.status.slice(0, 100) : null,
+  });
+  // The first heartbeat from any agent is this server's own signal that
+  // the runner is alive -- mirrors what the old local main() loop did with
+  // its own transition("start", ...) at startup, just now driven by the
+  // remote agent's heartbeat instead of a local process boot.
+  if (readRunnerState().state === "stopped") {
+    runner.transition("start", { reason: `agent ${auth.agentId} heartbeat` });
+  }
+  let pending = null;
+  try { pending = JSON.parse(fs.readFileSync(runner.COMMANDS_FILE, "utf8")); } catch { /* none pending */ }
+  sendJson(res, 200, { ok: true, pending_command: pending });
+}
+
+async function handleAgentClaim(req, res) {
+  let body = {};
+  try { body = await readJsonBody(req); } catch (e) { return sendJson(res, e.status || 400, { error: e.message }); }
+  const auth = authenticateAgentRequest(req, body);
+  if (!auth.ok) return sendJson(res, auth.status, { error: auth.error });
+  touchAgent(auth.agents, auth.agentId, auth.seq);
+
+  // Pull first so any human /automation action (hold/skip/reorder -- each
+  // already committed by this same server) is visible before deciding
+  // what's next; never hand out a task based on state that might already
+  // be stale.
+  runner.run("git", ["pull", "--ff-only", "origin", "main"]);
+
+  const selected = runner.nextTask();
+  if (!selected) return sendJson(res, 200, { task: null });
+
+  const current = runner.load(selected.file);
+  const preClaimStatus = current.status;
+  current.status = "claimed";
+  current.result = { ...(current.result || {}), pre_claim_status: preClaimStatus, agent_lease: buildLease(auth.agentId, AGENT_LEASE_MINUTES_DEFAULT) };
+  runner.save(selected.file, current);
+  const commitResult = runner.commitRunnerState(selected.file, current.id, `claimed by agent ${auth.agentId}`);
+  if (!commitResult.ok) {
+    // Never hand out a task the server couldn't actually persist as
+    // claimed -- a concurrent claim (a second agent, or a retry) could
+    // otherwise pick up the exact same task from a dirty/uncommitted disk
+    // state that looks claimed locally but was never durably recorded.
+    current.status = preClaimStatus;
+    delete current.result.agent_lease;
+    runner.save(selected.file, current);
+    return sendJson(res, 500, { error: `could not commit claim: ${commitResult.reason}` });
+  }
+  runner.transition("task_claimed", { reason: `claimed by agent ${auth.agentId}`, taskId: current.id });
+  sendJson(res, 200, { task: current });
+}
+
+async function handleAgentReportState(req, res) {
+  let body = {};
+  try { body = await readJsonBody(req); } catch (e) { return sendJson(res, e.status || 400, { error: e.message }); }
+  const auth = authenticateAgentRequest(req, body);
+  if (!auth.ok) return sendJson(res, auth.status, { error: auth.error });
+  touchAgent(auth.agents, auth.agentId, auth.seq);
+  const taskId = typeof body.task_id === "string" ? body.task_id : null;
+  if (taskId && !isSafeTaskId(taskId)) return sendJson(res, 400, { error: "invalid task_id" });
+  const event = typeof body.event === "string" ? body.event : null;
+  if (!event) return sendJson(res, 400, { error: "missing event" });
+  const reason = typeof body.reason === "string" ? body.reason.slice(0, 500) : null;
+  const transitioned = runner.transition(event, { reason, taskId, sessionId: auth.agentId });
+  sendJson(res, 200, { ok: true, transitioned });
+}
+
+async function handleAgentReportCheckpoint(req, res) {
+  let body = {};
+  try { body = await readJsonBody(req); } catch (e) { return sendJson(res, e.status || 400, { error: e.message }); }
+  const auth = authenticateAgentRequest(req, body);
+  if (!auth.ok) return sendJson(res, auth.status, { error: auth.error });
+  touchAgent(auth.agents, auth.agentId, auth.seq);
+  const taskId = typeof body.task_id === "string" ? body.task_id : null;
+  if (taskId && !isSafeTaskId(taskId)) return sendJson(res, 400, { error: "invalid task_id" });
+  runner.appendEvent({
+    ts: new Date().toISOString(),
+    event: "checkpoint",
+    previous_state: null,
+    new_state: null,
+    reason: typeof body.summary === "string" ? body.summary.slice(0, 500) : null,
+    task_id: taskId,
+    session_id: auth.agentId,
+  });
+  sendJson(res, 200, { ok: true });
+}
+
+async function handleAgentReportResult(req, res) {
+  let body = {};
+  try { body = await readJsonBody(req); } catch (e) { return sendJson(res, e.status || 400, { error: e.message }); }
+  const auth = authenticateAgentRequest(req, body);
+  if (!auth.ok) return sendJson(res, auth.status, { error: auth.error });
+  touchAgent(auth.agents, auth.agentId, auth.seq);
+  const taskId = typeof body.task_id === "string" ? body.task_id : null;
+  if (!taskId || !isSafeTaskId(taskId)) return sendJson(res, 400, { error: "invalid task_id" });
+  const outcome = typeof body.outcome === "string" ? body.outcome : null;
+  const validOutcomes = new Set(["done", "failed", "blocked", "waiting_for_limit", "waiting_for_auth", "checkpointing", "interrupted"]);
+  if (!validOutcomes.has(outcome)) return sendJson(res, 400, { error: `invalid outcome: ${outcome}` });
+
+  // The agent's own commit (pushed from its local checkout) is the
+  // authoritative record of what actually happened -- pull it in now so
+  // this server's copy (and therefore /automation) reflects the real
+  // task file, not a value trusted blindly from the HTTP body.
+  runner.run("git", ["pull", "--ff-only", "origin", "main"]);
+
+  const eventByOutcome = {
+    done: "safe_point_reached_idle",
+    blocked: "owner_gate_blocked",
+    checkpointing: "safe_point_reached",
+    waiting_for_limit: "rate_limited",
+    waiting_for_auth: "auth_required",
+    failed: "task_failed",
+    interrupted: "emergency_stop_command",
+  };
+  runner.transition(eventByOutcome[outcome] || "task_failed", {
+    reason: typeof body.summary === "string" ? body.summary.slice(0, 500) : outcome,
+    taskId,
+    sessionId: auth.agentId,
+  });
+  sendJson(res, 200, { ok: true });
+}
+
+async function handleAgentRequestDeploy(req, res) {
+  let body = {};
+  try { body = await readJsonBody(req); } catch (e) { return sendJson(res, e.status || 400, { error: e.message }); }
+  const auth = authenticateAgentRequest(req, body);
+  if (!auth.ok) return sendJson(res, auth.status, { error: auth.error });
+  touchAgent(auth.agents, auth.agentId, auth.seq);
+
+  const taskId = body.task_id;
+  const commitSha = body.commit_sha;
+  if (!isSafeTaskId(taskId)) return sendJson(res, 400, { error: "invalid task_id" });
+  if (typeof commitSha !== "string" || !/^[0-9a-f]{7,40}$/i.test(commitSha)) {
+    return sendJson(res, 400, { error: "invalid commit_sha" });
+  }
+
+  // Never trust the agent's claim about what it pushed -- confirm the
+  // commit is genuinely reachable from origin/main before touching
+  // production at all. Only ever fixed, hardcoded git/systemctl
+  // invocations below -- no shell string ever comes from the agent.
+  runner.run("git", ["fetch", "origin", "main"]);
+  const originHead = runner.run("git", ["rev-parse", "origin/main"]).stdout.trim();
+  const ancestorCheck = runner.run("git", ["merge-base", "--is-ancestor", commitSha, "origin/main"]);
+  if (ancestorCheck.status !== 0) {
+    return sendJson(res, 409, { error: `commit ${commitSha} is not an ancestor of origin/main (${originHead}) -- refusing to deploy` });
+  }
+
+  const pull = cp.spawnSync("sudo", ["-u", PRODUCTION_USER, "git", "-C", PRODUCTION_DIR, "pull", "--ff-only", "origin", "main"], { encoding: "utf8" });
+  if (pull.status !== 0) return sendJson(res, 500, { error: `production pull failed: ${(pull.stderr || "").trim()}` });
+  const prodHeadResult = cp.spawnSync("sudo", ["-u", PRODUCTION_USER, "git", "-C", PRODUCTION_DIR, "rev-parse", "HEAD"], { encoding: "utf8" });
+  const productionHead = (prodHeadResult.stdout || "").trim();
+  const restart = cp.spawnSync("systemctl", ["restart", PRODUCTION_SERVICE], { encoding: "utf8" });
+  if (restart.status !== 0) return sendJson(res, 500, { error: `service restart failed: ${(restart.stderr || "").trim()}`, production_head: productionHead });
+
+  sendJson(res, 200, { ok: true, production_head: productionHead, origin_head: originHead, task_id: taskId });
+}
+
 // --- router --------------------------------------------------------------
 
 async function router(req, res) {
@@ -305,6 +612,14 @@ async function router(req, res) {
       return await handleTaskAction(req, res, parts[2], parts[3]);
     }
     if (req.method === "POST" && url.pathname === "/api/tasks/reorder") return await handleReorder(req, res);
+
+    if (req.method === "POST" && url.pathname === "/api/agent/register") return await handleAgentRegister(req, res);
+    if (req.method === "POST" && url.pathname === "/api/agent/heartbeat") return await handleAgentHeartbeat(req, res);
+    if (req.method === "POST" && url.pathname === "/api/agent/claim") return await handleAgentClaim(req, res);
+    if (req.method === "POST" && url.pathname === "/api/agent/report-state") return await handleAgentReportState(req, res);
+    if (req.method === "POST" && url.pathname === "/api/agent/report-checkpoint") return await handleAgentReportCheckpoint(req, res);
+    if (req.method === "POST" && url.pathname === "/api/agent/report-result") return await handleAgentReportResult(req, res);
+    if (req.method === "POST" && url.pathname === "/api/agent/request-deploy") return await handleAgentRequestDeploy(req, res);
 
     if (req.method === "GET") return serveStatic(req, res, url.pathname);
     sendJson(res, 404, { error: "not found" });
@@ -369,7 +684,8 @@ function start(opts = {}) {
 module.exports = {
   start, router, isRunnerActuallyRunning, readRunnerState, readEvents, writeCommand, startRunnerEngine,
   acquireControlLock, releaseControlLock,
-  HOST, PORT, MAX_BODY_BYTES, WEB_DIR, CONTROL_LOCK,
+  getOrCreateAgentToken, readAgents, writeAgents, touchAgent, authenticateAgentToken, authenticateAgentRequest, summarizeAgents,
+  HOST, PORT, MAX_BODY_BYTES, WEB_DIR, CONTROL_LOCK, AGENT_TOKEN_FILE, AGENTS_FILE,
 };
 
 if (require.main === module) {

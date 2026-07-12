@@ -13,11 +13,20 @@ from fastapi.templating import Jinja2Templates
 
 load_dotenv()
 
-from ego_os import automation_bridge, employees, skills, store, tools, worker  # noqa: E402
+from ego_os import agent_routes, automation_bridge, employees, skills, store, tools, worker  # noqa: E402
 from ego_os.auth import require_owner, verify_csrf  # noqa: E402
 
 app = FastAPI(title="Ego OS", dependencies=[Depends(require_owner), Depends(verify_csrf)])
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+# Mounted as a genuinely separate ASGI sub-application -- app.mount()
+# deliberately bypasses the parent app's global require_owner/verify_csrf
+# dependencies, which is exactly right here: the Windows Runner Agent is a
+# machine credential (its own token, checked entirely by
+# automation/control_server.js) rather than the human Owner, so it must
+# never need (or be able to abuse) Owner Basic Auth. See
+# ego_os/agent_routes.py's own docstring for the full reasoning.
+app.mount("/agent", agent_routes.app)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -238,6 +247,13 @@ def automation_page(request: Request):
             "tasks": (tasks_result.get("data") or {}).get("tasks", []) if tasks_result["ok"] else [],
             "events": list(reversed((events_result.get("data") or {}).get("events", []))) if events_result["ok"] else [],
             "latest_log": _latest_log_tail(task_detail),
+            # Windows Runner Agent (SERVER-RUNNER-DARK-UI): Claude Code
+            # cannot run on this VPS (confirmed external blocker) -- the
+            # queue/state machine/control API stay here, execution moved to
+            # the Owner's own machine. "online" is a plain heartbeat-recency
+            # check (control_server.js's isAgentOnline), never inferred.
+            "agents": (status.get("data") or {}).get("agents", []) if status["ok"] else [],
+            "any_agent_online": (status.get("data") or {}).get("any_agent_online", False) if status["ok"] else False,
         },
     )
 

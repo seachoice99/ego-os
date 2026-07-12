@@ -275,6 +275,57 @@ function maskSecrets(text) {
   return masked;
 }
 
+// --- Windows Runner Agent coordination ------------------------------------
+// Claude Code cannot run on the production VPS (confirmed live, external
+// blocker -- the CLI hangs identically whether launched via npm, the
+// native installer's own setup step, or interactively). Execution moves to
+// a Windows agent on the Owner's own machine; the VPS becomes a
+// coordinator only: it stores the queue, hands out one task at a time,
+// tracks liveness, and never runs `claude` itself again.
+
+// How long an agent may hold a claimed task before the lease is treated as
+// abandoned and the task becomes claimable again -- checked lazily by
+// nextTask()'s own filter (no separate background timer needed), matching
+// the existing waiting_for_limit / isRetryDue pattern exactly.
+const AGENT_LEASE_MINUTES_DEFAULT = 30;
+
+function isLeaseExpired(lease, now = Date.now()) {
+  if (!lease || !lease.expires_at) return true;
+  const t = Date.parse(lease.expires_at);
+  return !Number.isFinite(t) || now >= t;
+}
+
+function buildLease(agentId, minutes, now = Date.now()) {
+  return {
+    agent_id: agentId,
+    claimed_at: new Date(now).toISOString(),
+    expires_at: new Date(now + (minutes || AGENT_LEASE_MINUTES_DEFAULT) * 60000).toISOString(),
+  };
+}
+
+// Replay/reused-request defense that doesn't depend on synchronized
+// clocks: each agent keeps its own strictly-increasing local counter and
+// sends it as `seq` on every request. The server remembers the highest
+// `seq` it has ever accepted per agent_id and rejects anything at or
+// below that -- a genuine new request from a well-behaved agent always
+// uses a higher seq than any request before it; a captured-and-replayed
+// request reuses an old (now too-low) seq and is rejected.
+function isReplayedRequest(seq, lastSeqSeen) {
+  if (!Number.isFinite(seq) || seq <= 0) return true; // malformed is never trusted
+  if (lastSeqSeen == null) return false;
+  return seq <= lastSeqSeen;
+}
+
+// An agent counts as online if it has heartbeated within the last
+// staleAfterMs -- a simple, honest liveness signal for /automation to
+// display, never inferred from anything else (no "probably still running"
+// guessing).
+function isAgentOnline(lastHeartbeatAt, now = Date.now(), staleAfterMs = 90000) {
+  if (!lastHeartbeatAt) return false;
+  const t = Date.parse(lastHeartbeatAt);
+  return Number.isFinite(t) && (now - t) < staleAfterMs;
+}
+
 module.exports = {
   RUNNER_STATES,
   TASK_STATES,
@@ -292,4 +343,9 @@ module.exports = {
   summarizeTask,
   SECRET_PATTERNS,
   maskSecrets,
+  AGENT_LEASE_MINUTES_DEFAULT,
+  isLeaseExpired,
+  buildLease,
+  isReplayedRequest,
+  isAgentOnline,
 };

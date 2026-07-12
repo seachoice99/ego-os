@@ -24,6 +24,7 @@ const {
   commandAllowedInState,
   nextRunnerState,
   buildEvent,
+  isLeaseExpired,
 } = require("./runner_control.js");
 
 // Overridable so tests can run preflight()'s real (but read-only) git
@@ -381,6 +382,28 @@ function nextTask() {
     // which requires an explicit human "retry", this one is safe to just
     // pick back up: the human's own resume command already authorized it.
     if (x.task.status === "checkpointing") return true;
+    // Windows Runner Agent coordination: a task "claimed" by an agent
+    // (control_server.js's /api/agent/claim) reverts to its pre-claim
+    // status once the lease expires -- the agent may have crashed, lost
+    // network, or the Owner's machine may simply be off. Reverted lazily
+    // here (no separate background timer needed), matching the existing
+    // isRetryDue pattern exactly.
+    if (x.task.status === "claimed") {
+      const lease = x.task.result && x.task.result.agent_lease;
+      if (isLeaseExpired(lease, now)) {
+        const reverted = load(x.file);
+        reverted.status = (reverted.result && reverted.result.pre_claim_status) || "ready";
+        if (reverted.result) {
+          reverted.result.agent_lease = null;
+          reverted.result.lease_expired_at = new Date(now).toISOString();
+        }
+        save(x.file, reverted);
+        commitRunnerState(x.file, reverted.id, "lease expired, reverted to " + reverted.status);
+        x.task = reverted;
+        return reverted.status === "ready" || (reverted.status === "waiting_for_limit" && isRetryDue(reverted.result && reverted.result.retry_after, now));
+      }
+      return false; // still validly leased to a live agent
+    }
     return false;
   });
   // queue_order (set by POST /api/tasks/reorder) breaks ties within the

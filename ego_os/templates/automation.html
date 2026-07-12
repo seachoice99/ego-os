@@ -49,27 +49,50 @@
 
   {% if not control_server_available %}
   <div class="unavailable-banner">
-    Control server runner недоступен на этом сервере (нет ответа на 127.0.0.1). Если он ещё не запущен как systemd-сервис,
-    нажмите «Старт» ниже, или проверьте <code>systemctl status ego-os-runner</code> на сервере.
+    Control server (очередь и координация) недоступен на этом сервере (нет ответа на 127.0.0.1). Проверьте
+    <code>systemctl status ego-os-coordinator</code> на сервере.
+  </div>
+  {% elif not any_agent_online %}
+  <div class="unavailable-banner">
+    Windows Runner Agent сейчас offline. Claude Code выполняется только на вашем компьютере — задачи не будут забраны,
+    пока агент не подключится (запускается автоматически при входе в Windows, либо вручную:
+    <code>Start-ScheduledTask -TaskName 'EgoOS-WindowsRunnerAgent'</code>).
   </div>
   {% endif %}
+
+  <section>
+    <h2>Windows Runner Agent</h2>
+    {% if agents %}
+    <table>
+      <tr><th>Имя</th><th>Статус</th><th>Последний heartbeat</th></tr>
+      {% for a in agents %}
+      <tr>
+        <td>{{ a.name or a.agent_id }}</td>
+        <td><span class="status-{{ 'success' if a.online else 'unknown' }}">{{ 'online' if a.online else 'offline' }}</span></td>
+        <td>{{ a.last_heartbeat_at or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p>Ни один Windows Agent ещё не зарегистрировался.</p>
+    {% endif %}
+  </section>
 
   <section>
     <div class="runner-bar">
       <span class="runner-badge status-{{ runner_state or 'unknown' }}">{{ runner_state or 'неизвестно' }}</span>
       <span class="subtitle" style="margin:0;">
-        {% if runner_pid %}PID {{ runner_pid }} &middot; {% endif %}
         {% if runner_updated_at %}обновлено: {{ runner_updated_at }}{% endif %}
         {% if runner_reason %} &middot; причина: {{ runner_reason }}{% endif %}
       </span>
       <div class="actions">
-        <form method="post" action="/automation/runner/start"><button title="Запустить runner в режиме наблюдения за очередью">Старт</button></form>
-        <form method="post" action="/automation/runner/pause"><button title="Не убьёт текущий процесс — дождётся безопасной точки (после теста/commit/push) и только тогда поставит на паузу">Пауза</button></form>
-        <form method="post" action="/automation/runner/resume"><button title="Проверит Git и отсутствие зависших процессов, продолжит с последней сохранённой точки в НОВОЙ сессии">Продолжить</button></form>
+        <form method="post" action="/automation/runner/start"><button title="Если агент на паузе — снимет паузу на следующем heartbeat. Не запускает ничего на сервере (Claude Code здесь не выполняется).">Старт</button></form>
+        <form method="post" action="/automation/runner/pause"><button title="Не убьёт текущий процесс — дождётся безопасной точки (после теста/commit/push) и только тогда поставит на паузу. Команда доходит до агента на следующем heartbeat (обычно до ~10 секунд).">Пауза</button></form>
+        <form method="post" action="/automation/runner/resume"><button title="Агент проверит Git и отсутствие зависших процессов, продолжит с последней сохранённой точки в НОВОЙ сессии">Продолжить</button></form>
         <form method="post" action="/automation/runner/stop-after-stage"><button title="Даст текущему этапу закончиться, сохранит handoff, не начнёт следующий этап">Остановить после этапа</button></form>
-        <form method="post" action="/automation/runner/emergency-stop" onsubmit="return confirm('Экстренная остановка немедленно прервёт текущий процесс Claude. Файлы не удаляются, Git не откатывается, но задача будет помечена interrupted и потребует проверки перед следующим запуском. Продолжить?');">
+        <form method="post" action="/automation/runner/emergency-stop" onsubmit="return confirm('Экстренная остановка немедленно прервёт текущий процесс Claude на вашем компьютере. Файлы не удаляются, Git не откатывается, но задача будет помечена interrupted и потребует проверки перед следующим запуском. Продолжить?');">
           <input type="hidden" name="confirm" value="true">
-          <button class="danger" title="Требует подтверждения. Прерывает процесс немедленно.">Экстренная остановка</button>
+          <button class="danger" title="Требует подтверждения. Прерывает процесс немедленно (в пределах ~10 секунд, пока агент опрашивает сервер).">Экстренная остановка</button>
         </form>
       </div>
     </div>
