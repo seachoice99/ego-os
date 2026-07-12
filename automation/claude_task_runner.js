@@ -46,8 +46,15 @@ const COMMANDS_FILE = path.join(CONTROL_DIR, "commands.json");
 const RUNNER_STATE_FILE = path.join(CONTROL_DIR, "runner_state.json");
 const EVENTS_FILE = path.join(CONTROL_DIR, "events.ndjson");
 // Overridable so tests can point the runner at a fake/mock executable
-// instead of ever spawning a real Claude Code process.
-const CLAUDE = process.env.EGO_OS_RUNNER_CLAUDE_PATH || path.join(process.env.APPDATA || "", "npm", "claude.cmd");
+// instead of ever spawning a real Claude Code process. The Windows default
+// names an absolute path because npm's global bin location is predictable
+// there; on Linux/macOS there's no equivalent single predictable path
+// (nvm, system npm, NodeSource, etc. all differ), so the default is the
+// bare command name and resolution is left to PATH via shell:true --
+// preflight() below deliberately skips its own fs.existsSync check for a
+// non-absolute CLAUDE for exactly this reason.
+const CLAUDE = process.env.EGO_OS_RUNNER_CLAUDE_PATH
+  || (process.platform === "win32" ? path.join(process.env.APPDATA || "", "npm", "claude.cmd") : "claude");
 const OWNER_ONLY = new Set(["destructive_data", "irreversible_migration", "payments", "secrets", "external_infrastructure"]);
 
 function run(file, args, timeout = 60000, opts = {}) {
@@ -59,29 +66,52 @@ function run(file, args, timeout = 60000, opts = {}) {
 // module's own tests: it reliably killed the direct child (cmd.exe) but
 // left a grandchild several process-layers deep (cmd.exe -> claude.cmd ->
 // claude.exe, or in tests cmd.exe -> node -> node) still running. Walk
-// the real process tree ourselves via WMI's Win32_Process (its own
-// ParentProcessId is the same mechanism that correctly diagnosed this
-// defect) and kill every descendant explicitly, rather than trusting
-// /T's single heuristic pass to cascade correctly.
+// the real process tree ourselves (via WMI's Win32_Process on Windows, via
+// `ps -eo pid,ppid` on Linux/macOS -- same ParentProcessId-based algorithm
+// either way) and kill every descendant explicitly, rather than trusting
+// a single-pass heuristic to cascade correctly.
+//
+// This platform split was found necessary live, not designed up front:
+// the very first real Claude Code CLI hang on a Linux VPS revealed that
+// this function previously ran `powershell`/`taskkill` unconditionally --
+// neither exists on Linux, spawnSync just failed silently (ENOENT is not
+// checked on that call), so the process list came back empty, nothing was
+// ever killed, and the timeout's own setTimeout firing correctly did
+// nothing to actually stop the hung process -- runClaude()'s promise
+// never resolved because 'close' never fired on a still-alive child.
+function listProcessParents() {
+  if (process.platform === "win32") {
+    const query = cp.spawnSync("powershell", [
+      "-NoProfile", "-Command",
+      "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress",
+    ], { encoding: "utf8", windowsHide: true });
+    try {
+      const parsed = JSON.parse(query.stdout || "[]");
+      const list = Array.isArray(parsed) ? parsed : [parsed];
+      return list.map((p) => ({ pid: p.ProcessId, ppid: p.ParentProcessId }));
+    } catch {
+      return [];
+    }
+  }
+  const query = cp.spawnSync("ps", ["-eo", "pid,ppid"], { encoding: "utf8" });
+  if (query.status !== 0 || !query.stdout) return [];
+  return query.stdout
+    .split("\n")
+    .slice(1) // header row
+    .map((line) => line.trim().split(/\s+/).map(Number))
+    .filter(([pid, ppid]) => Number.isFinite(pid) && Number.isFinite(ppid))
+    .map(([pid, ppid]) => ({ pid, ppid }));
+}
+
 function killProcessTree(pid) {
   if (!pid) return;
-  const query = cp.spawnSync("powershell", [
-    "-NoProfile", "-Command",
-    "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress",
-  ], { encoding: "utf8", windowsHide: true });
-  let processes = [];
-  try {
-    const parsed = JSON.parse(query.stdout || "[]");
-    processes = Array.isArray(parsed) ? parsed : [parsed];
-  } catch {
-    processes = [];
-  }
+  const processes = listProcessParents();
   const byParent = new Map();
   for (const p of processes) {
-    if (p.ParentProcessId == null) continue;
-    const list = byParent.get(p.ParentProcessId) || [];
-    list.push(p.ProcessId);
-    byParent.set(p.ParentProcessId, list);
+    if (p.ppid == null) continue;
+    const list = byParent.get(p.ppid) || [];
+    list.push(p.pid);
+    byParent.set(p.ppid, list);
   }
   const toKill = [];
   const stack = [Number(pid)];
@@ -94,7 +124,15 @@ function killProcessTree(pid) {
     for (const child of byParent.get(current) || []) stack.push(child);
   }
   for (const targetPid of toKill) {
-    cp.spawnSync("taskkill", ["/F", "/PID", String(targetPid)], { windowsHide: true });
+    if (process.platform === "win32") {
+      cp.spawnSync("taskkill", ["/F", "/PID", String(targetPid)], { windowsHide: true });
+    } else {
+      try {
+        process.kill(targetPid, "SIGKILL");
+      } catch {
+        /* already gone -- not an error */
+      }
+    }
   }
 }
 
@@ -291,10 +329,17 @@ async function preflight() {
   const origin = run("git", ["rev-parse", "origin/main"]).stdout.trim();
   const branch = run("git", ["branch", "--show-current"]).stdout.trim();
   if (branch !== "main" || head !== origin) return [false, "local main must exactly match origin/main"];
-  if (!fs.existsSync(CLAUDE)) return [false, `Claude CLI not found at ${CLAUDE}`];
-  // Confirms the .cmd is actually invokable this way (shell:true, absolute
-  // path, no untrusted content in argv) before committing to a task run --
-  // catches an EINVAL/quoting regression before it burns a task attempt.
+  // Only meaningful for an absolute CLAUDE path (Windows' default, or any
+  // explicit EGO_OS_RUNNER_CLAUDE_PATH override) -- a bare command name
+  // (the non-Windows default, resolved via PATH through shell:true) isn't
+  // a real filesystem path relative to ROOT, so fs.existsSync against it
+  // would just check for a wrongly-named file in the repo and always fail.
+  // The real existence/executability check either way is the probe below.
+  if (path.isAbsolute(CLAUDE) && !fs.existsSync(CLAUDE)) return [false, `Claude CLI not found at ${CLAUDE}`];
+  // Confirms the CLI is actually invokable this way (shell:true, no
+  // untrusted content in argv) before committing to a task run -- catches
+  // an EINVAL/quoting regression, a missing PATH entry, or a hung/broken
+  // CLI before burning a task attempt.
   const probe = await runClaude("", ["--version"], 15000);
   if (probe.status !== 0 || probe.error) return [false, `Claude CLI probe failed: ${(probe.error && probe.error.message) || probe.stderr || "non-zero exit"}`];
   return [true, head];
@@ -701,7 +746,7 @@ async function main() {
 }
 
 module.exports = {
-  run, runClaude, killProcessTree, load, save, preflight, nextTask, listTasks, execute, main,
+  run, runClaude, killProcessTree, listProcessParents, load, save, preflight, nextTask, listTasks, execute, main,
   buildStagePrompt, gitStateBlockNow, handoffPathFor, readHandoff, commitRunnerState,
   readPendingCommand, clearPendingCommand, appendEvent, writeRunnerState, transition,
   getRunnerState: () => runnerState,

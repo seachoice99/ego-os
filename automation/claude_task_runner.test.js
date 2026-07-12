@@ -518,6 +518,83 @@ test("nextTask() includes a checkpointing task (resumed after pause), unlike wai
   delete process.env.EGO_OS_RUNNER_QUEUE_DIR;
 });
 
+// --- 15. killProcessTree's Linux/macOS tree-walk parses `ps -eo pid,ppid` correctly ---
+// Found live deploying to a real Linux VPS: killProcessTree() previously
+// ran `powershell`/`taskkill` unconditionally. Neither exists on Linux;
+// spawnSync just failed silently (ENOENT wasn't checked), the process
+// list came back empty, and nothing was ever actually killed -- a 15s
+// probe timeout fired correctly but the hung `claude --version` process
+// (and the whole runClaude() promise) never resolved, since 'close' only
+// fires once the child is genuinely dead. This test can't spawn a real
+// process tree and kill it here (this suite runs on Windows), but it
+// proves the *parsing/tree-walk algorithm* the Linux branch depends on is
+// sound -- the same algorithm already proven correct against WMI's own
+// shape on Windows, fed synthetic `ps -eo pid,ppid` output instead. The
+// real end-to-end proof is the live VPS verification recorded in
+// automation/SERVER_RUNNER_VERIFICATION.md.
+
+test("listProcessParents() parses `ps -eo pid,ppid` output into {pid, ppid} pairs on non-Windows", () => {
+  const cpMod = require("child_process");
+  const originalSpawnSync = cpMod.spawnSync;
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+  try {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    cpMod.spawnSync = (file, args) => {
+      if (file === "ps" && args[0] === "-eo" && args[1] === "pid,ppid") {
+        return {
+          status: 0,
+          stdout: "  PID  PPID\n"
+            + "    1     0\n"
+            + " 2000     1\n"
+            + " 2001  2000\n"
+            + " 2002  2001\n"
+            + " 2003  2001\n",
+        };
+      }
+      return originalSpawnSync(file, args);
+    };
+    delete require.cache[require.resolve("./claude_task_runner.js")];
+    const runnerLinux = require("./claude_task_runner.js");
+    const parsed = runnerLinux.listProcessParents();
+    assert.deepEqual(
+      parsed.filter((p) => p.pid >= 2000),
+      [{ pid: 2000, ppid: 1 }, { pid: 2001, ppid: 2000 }, { pid: 2002, ppid: 2001 }, { pid: 2003, ppid: 2001 }],
+    );
+  } finally {
+    cpMod.spawnSync = originalSpawnSync;
+    Object.defineProperty(process, "platform", originalPlatform);
+    delete require.cache[require.resolve("./claude_task_runner.js")];
+  }
+});
+
+test("killProcessTree() on non-Windows walks the full descendant tree and SIGKILLs each one individually", () => {
+  const cpMod = require("child_process");
+  const originalSpawnSync = cpMod.spawnSync;
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+  const killed = [];
+  const originalKill = process.kill;
+  try {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    cpMod.spawnSync = (file, args) => {
+      if (file === "ps" && args[0] === "-eo") {
+        return { status: 0, stdout: "  PID  PPID\n 3000     1\n 3001  3000\n 3002  3001\n 9999     1\n" };
+      }
+      return originalSpawnSync(file, args);
+    };
+    process.kill = (pid, sig) => { killed.push([pid, sig]); };
+    delete require.cache[require.resolve("./claude_task_runner.js")];
+    const runnerLinux = require("./claude_task_runner.js");
+    runnerLinux.killProcessTree(3000);
+    assert.deepEqual(new Set(killed.map((k) => k[0])), new Set([3000, 3001, 3002]), "must kill the target plus every descendant, and nothing unrelated (9999 excluded)");
+    assert.ok(killed.every((k) => k[1] === "SIGKILL"));
+  } finally {
+    cpMod.spawnSync = originalSpawnSync;
+    process.kill = originalKill;
+    Object.defineProperty(process, "platform", originalPlatform);
+    delete require.cache[require.resolve("./claude_task_runner.js")];
+  }
+});
+
 test("no fake_claude/setInterval process from any test in this file is still running", () => {
   const cpMod = require("child_process");
   // Filtered to Name='node.exe' specifically -- this PowerShell query
