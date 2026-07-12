@@ -176,6 +176,105 @@ function resolveTaskFile(queueDir, id, path) {
   return resolved;
 }
 
+// --- Task-level action rules (control-API queue management) --------------
+
+// Which task actions make sense given the task's CURRENT status -- checked
+// by control_server.js before ever touching a task file, so an accidental
+// or malicious request (e.g. "retry" on a task that's still running)
+// cannot corrupt an in-flight task.
+function taskActionAllowed(action, taskStatus) {
+  switch (action) {
+    case "hold":
+      return taskStatus === "ready";
+    case "unhold":
+      return taskStatus === "held";
+    case "skip":
+      return ["ready", "held", "blocked", "waiting_for_limit", "waiting_for_auth"].includes(taskStatus);
+    case "retry":
+      return ["failed", "waiting_for_auth", "interrupted"].includes(taskStatus);
+    default:
+      return false;
+  }
+}
+
+// A reorder request may only touch "ready" tasks (an already-claimed,
+// running, or finished task's position is never up for grabs), and must
+// never place a task ahead of a `depends_on` task that has not reached
+// "done" -- whether or not that dependency is itself part of the reorder.
+function validateReorder(order, tasksById) {
+  if (!Array.isArray(order) || !order.length) {
+    return { ok: false, reason: "order must be a non-empty array of task ids" };
+  }
+  const seen = new Set();
+  for (const id of order) {
+    if (seen.has(id)) return { ok: false, reason: `duplicate id in reorder request: ${id}` };
+    seen.add(id);
+    const task = tasksById[id];
+    if (!task) return { ok: false, reason: `unknown task id: ${id}` };
+    if (task.status !== "ready") {
+      return { ok: false, reason: `${id} is not 'ready' (currently '${task.status}') -- cannot reorder a task that is already claimed, running, or finished` };
+    }
+  }
+  const position = new Map(order.map((id, i) => [id, i]));
+  for (const id of order) {
+    for (const depId of tasksById[id].depends_on || []) {
+      const depTask = tasksById[depId];
+      if (!depTask || depTask.status === "done") continue;
+      if (!position.has(depId)) {
+        return { ok: false, reason: `${id} depends on ${depId}, which is not done and not included in this reorder` };
+      }
+      if (position.get(depId) > position.get(id)) {
+        return { ok: false, reason: `${id} cannot be placed ahead of its dependency ${depId}, which is not done` };
+      }
+    }
+  }
+  return { ok: true };
+}
+
+// A stable, minimal shape for the queue table (GET /api/tasks) -- deliberately
+// never includes the full prompt/result blob by default, just enough for
+// the UI's queue table and status bar. No secrets ever live in a task file
+// in this codebase, but keeping the response shape explicit and narrow is
+// still the safer default for anything served over the control API.
+function summarizeTask(task) {
+  return {
+    id: task.id,
+    title: task.title,
+    priority: task.priority,
+    status: task.status,
+    release: task.release,
+    owner_approved: Boolean(task.owner_approved),
+    max_duration_minutes: task.max_duration_minutes ?? null,
+    queue_order: task.queue_order ?? null,
+    blocked_reason: task.status === "blocked" ? (task.result && (task.result.error || task.result.reason)) || null : null,
+    retry_after: (task.result && task.result.retry_after) || null,
+    summary: (task.result && task.result.summary) || null,
+    sessions_count: (task.result && Array.isArray(task.result.sessions)) ? task.result.sessions.length : 0,
+  };
+}
+
+// --- Secret masking for the logs panel ------------------------------------
+
+// Defense in depth for GET /api/logs: a stage's raw stream-json log is not
+// expected to contain credentials (the runner never prints .env contents),
+// but a copy-paste of an error message or an environment dump inside a
+// child process's own output is not impossible. These patterns are masked
+// unconditionally before any log line ever leaves the control server.
+const SECRET_PATTERNS = [
+  /sk-ant-[A-Za-z0-9_-]{10,}/g,
+  /sk-[A-Za-z0-9_-]{20,}/g,
+  /Bearer\s+[A-Za-z0-9._-]{10,}/gi,
+  /(OWNER_PASSWORD|OPENROUTER_API_KEY|API_KEY|ANTHROPIC_API_KEY)\s*=\s*\S+/gi,
+];
+
+function maskSecrets(text) {
+  let masked = String(text ?? "");
+  for (const pattern of SECRET_PATTERNS) {
+    masked = masked.replace(pattern, "[REDACTED]");
+  }
+  return masked;
+}
+
 module.exports = {
   RUNNER_STATES,
   TASK_STATES,
@@ -188,4 +287,9 @@ module.exports = {
   SAFE_TASK_ID_RE,
   isSafeTaskId,
   resolveTaskFile,
+  taskActionAllowed,
+  validateReorder,
+  summarizeTask,
+  SECRET_PATTERNS,
+  maskSecrets,
 };

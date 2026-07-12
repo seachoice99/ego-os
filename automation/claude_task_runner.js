@@ -300,12 +300,28 @@ async function preflight() {
   return [true, head];
 }
 
+const PRIORITY_RANK = { P0: 0, P1: 1, P2: 2, P3: 3 };
+
+// Shared by nextTask() and the control API (GET /api/tasks) so the API
+// never re-implements queue scanning/loading itself. A task file that
+// fails to load (bad JSON, missing required field) is skipped with a
+// console warning rather than crashing the whole scan -- one malformed
+// task must never take down visibility into every other task.
+function listTasks() {
+  return fs.readdirSync(QUEUE).filter(x => x.endsWith(".yaml") && !x.startsWith("_")).flatMap(name => {
+    const file = path.join(QUEUE, name);
+    try {
+      return [{ file, task: load(file) }];
+    } catch (error) {
+      console.error(`WARNING: skipping unreadable task file ${file}: ${error.message}`);
+      return [];
+    }
+  });
+}
+
 function nextTask() {
-  const rank = { P0: 0, P1: 1, P2: 2, P3: 3 };
   const now = Date.now();
-  const tasks = fs.readdirSync(QUEUE).filter(x => x.endsWith(".yaml") && !x.startsWith("_")).map(name => {
-    const file = path.join(QUEUE, name); return { file, task: load(file) };
-  }).filter(x => {
+  const tasks = listTasks().filter(x => {
     if (x.task.status === "ready") return true;
     // A task parked waiting_for_limit becomes eligible again once its own
     // recorded retry_after has passed -- never sooner, so the runner never
@@ -322,7 +338,13 @@ function nextTask() {
     if (x.task.status === "checkpointing") return true;
     return false;
   });
-  tasks.sort((a, b) => (rank[a.task.priority] ?? 99) - (rank[b.task.priority] ?? 99) || a.file.localeCompare(b.file));
+  // queue_order (set by POST /api/tasks/reorder) breaks ties within the
+  // same priority tier before falling back to filename -- absent for every
+  // task that was never explicitly reordered, so existing queues sort
+  // exactly as before.
+  tasks.sort((a, b) => (PRIORITY_RANK[a.task.priority] ?? 99) - (PRIORITY_RANK[b.task.priority] ?? 99)
+    || (a.task.queue_order ?? Infinity) - (b.task.queue_order ?? Infinity)
+    || a.file.localeCompare(b.file));
   return tasks[0] || null;
 }
 
@@ -679,10 +701,11 @@ async function main() {
 }
 
 module.exports = {
-  run, runClaude, killProcessTree, load, save, preflight, nextTask, execute, main,
+  run, runClaude, killProcessTree, load, save, preflight, nextTask, listTasks, execute, main,
   buildStagePrompt, gitStateBlockNow, handoffPathFor, readHandoff, commitRunnerState,
   readPendingCommand, clearPendingCommand, appendEvent, writeRunnerState, transition,
   getRunnerState: () => runnerState,
+  PRIORITY_RANK,
   CLAUDE, LOCK, LOG_DIR, HANDOFF_DIR, QUEUE, ROOT,
   CONTROL_DIR, COMMANDS_FILE, RUNNER_STATE_FILE, EVENTS_FILE,
 };

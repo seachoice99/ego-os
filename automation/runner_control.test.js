@@ -11,6 +11,10 @@ const {
   buildEvent,
   isSafeTaskId,
   resolveTaskFile,
+  taskActionAllowed,
+  validateReorder,
+  summarizeTask,
+  maskSecrets,
 } = require("./runner_control.js");
 
 // --- command validity -------------------------------------------------
@@ -131,4 +135,111 @@ test("resolveTaskFile stays inside queueDir for a safe id and rejects traversal 
   assert.equal(resolved, path.join(queueDir, "DA-03.yaml"));
   assert.equal(resolveTaskFile(queueDir, "../../../etc/passwd", path), null);
   assert.equal(resolveTaskFile(queueDir, "..", path), null);
+});
+
+// --- task action rules --------------------------------------------------
+
+test("taskActionAllowed: hold only from ready, unhold only from held", () => {
+  assert.equal(taskActionAllowed("hold", "ready"), true);
+  assert.equal(taskActionAllowed("hold", "running"), false);
+  assert.equal(taskActionAllowed("unhold", "held"), true);
+  assert.equal(taskActionAllowed("unhold", "ready"), false);
+});
+
+test("taskActionAllowed: retry only from failed/waiting_for_auth/interrupted, never from done", () => {
+  assert.equal(taskActionAllowed("retry", "failed"), true);
+  assert.equal(taskActionAllowed("retry", "waiting_for_auth"), true);
+  assert.equal(taskActionAllowed("retry", "interrupted"), true);
+  assert.equal(taskActionAllowed("retry", "done"), false);
+  assert.equal(taskActionAllowed("retry", "ready"), false);
+});
+
+test("taskActionAllowed: skip never allowed on an already-running or already-done task", () => {
+  assert.equal(taskActionAllowed("skip", "ready"), true);
+  assert.equal(taskActionAllowed("skip", "waiting_for_limit"), true);
+  assert.equal(taskActionAllowed("skip", "running"), false);
+  assert.equal(taskActionAllowed("skip", "done"), false);
+});
+
+// --- reorder validation --------------------------------------------------
+
+test("validateReorder accepts a simple reorder of independent ready tasks", () => {
+  const tasksById = {
+    A: { status: "ready" }, B: { status: "ready" }, C: { status: "ready" },
+  };
+  const result = validateReorder(["C", "A", "B"], tasksById);
+  assert.equal(result.ok, true);
+});
+
+test("validateReorder rejects an unknown id and a duplicate id", () => {
+  const tasksById = { A: { status: "ready" } };
+  assert.equal(validateReorder(["A", "GHOST"], tasksById).ok, false);
+  assert.equal(validateReorder(["A", "A"], tasksById).ok, false);
+});
+
+test("validateReorder rejects reordering a task that is not 'ready' (e.g. already running)", () => {
+  const tasksById = { A: { status: "running" }, B: { status: "ready" } };
+  const result = validateReorder(["A", "B"], tasksById);
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /not 'ready'/);
+});
+
+test("validateReorder rejects placing a task ahead of an unmet dependency", () => {
+  const tasksById = {
+    A: { status: "ready", depends_on: ["B"] },
+    B: { status: "ready" },
+  };
+  const result = validateReorder(["A", "B"], tasksById);
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /dependency/);
+  // The correct order (dependency first) is accepted.
+  assert.equal(validateReorder(["B", "A"], tasksById).ok, true);
+});
+
+test("validateReorder allows a dependency ahead once it is already done, even if not included in the reorder", () => {
+  const tasksById = {
+    A: { status: "ready", depends_on: ["B"] },
+    B: { status: "done" },
+  };
+  assert.equal(validateReorder(["A"], tasksById).ok, true);
+});
+
+// --- task summary (queue table shape) ------------------------------------
+
+test("summarizeTask produces a stable, minimal shape for the queue table", () => {
+  const task = {
+    id: "DA-03", title: "Digital Asset candidate nomination", priority: "P1", status: "blocked",
+    release: "no_deploy", owner_approved: false,
+    result: { error: "Owner-only risk lacks owner_approved: true", sessions: [{ stage: 1 }] },
+  };
+  const summary = summarizeTask(task);
+  assert.equal(summary.id, "DA-03");
+  assert.equal(summary.blocked_reason, "Owner-only risk lacks owner_approved: true");
+  assert.equal(summary.sessions_count, 1);
+});
+
+test("summarizeTask never throws on a task with no result yet", () => {
+  const summary = summarizeTask({ id: "X", title: "t", priority: "P2", status: "ready", release: "no_deploy" });
+  assert.equal(summary.sessions_count, 0);
+  assert.equal(summary.blocked_reason, null);
+});
+
+// --- secret masking (logs panel) ------------------------------------------
+
+test("maskSecrets redacts an Anthropic-shaped API key and a Bearer token", () => {
+  const text = "Using key sk-ant-api03-abcdefghijklmnop and header Bearer xyz123abcdefghij done";
+  const masked = maskSecrets(text);
+  assert.doesNotMatch(masked, /sk-ant-api03-abcdefghijklmnop/);
+  assert.doesNotMatch(masked, /xyz123abcdefghij/);
+  assert.match(masked, /\[REDACTED\]/);
+});
+
+test("maskSecrets redacts an OWNER_PASSWORD=... style assignment", () => {
+  const masked = maskSecrets("OWNER_PASSWORD=hunter2verysecret and more text");
+  assert.doesNotMatch(masked, /hunter2verysecret/);
+});
+
+test("maskSecrets leaves ordinary log text untouched", () => {
+  const text = "STAGE DA-02 #1/4 -- prompt 2793 chars (~699 tokens)\nDONE DA-02 (1 session(s))";
+  assert.equal(maskSecrets(text), text);
 });

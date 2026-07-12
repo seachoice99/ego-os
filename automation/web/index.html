@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ego OS — Runner Control</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div id="offline-banner" class="offline-banner hidden">
+  Соединение с control server потеряно — данные ниже устарели и могут не отражать реальное состояние.
+</div>
+
+<header class="topbar">
+  <div class="topbar-status">
+    <span id="runner-badge" class="badge badge-stopped">stopped</span>
+    <div class="topbar-details">
+      <div id="current-task-line">Задача не выполняется</div>
+      <div id="topbar-meta" class="muted"></div>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button id="btn-start" class="btn" title="Запустить runner в режиме наблюдения за очередью">Старт</button>
+    <button id="btn-pause" class="btn" title="Не убивает текущий процесс — дождётся безопасной точки (после теста/commit/push) и только тогда поставит на паузу">Пауза</button>
+    <button id="btn-resume" class="btn" title="Проверит Git и отсутствие зависших процессов, затем продолжит с последней сохранённой точки в НОВОЙ сессии">Продолжить</button>
+    <button id="btn-stop-stage" class="btn" title="Даст текущему этапу закончиться, сохранит handoff, но не начнёт следующий этап или задачу">Остановить после этапа</button>
+    <button id="btn-emergency" class="btn btn-danger" title="Немедленно остановит процесс. Не удаляет файлы и не делает reset. Требует подтверждения.">Экстренная остановка</button>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="panel panel-current">
+    <h2>Текущая операция</h2>
+    <div id="current-operation">Нет активной задачи.</div>
+    <div class="progress-row">
+      <span class="label">Прогресс по этапам:</span>
+      <span id="stage-progress">—</span>
+    </div>
+    <dl class="kv">
+      <dt>Последний commit</dt><dd id="last-commit">—</dd>
+      <dt>Тесты</dt><dd id="last-tests">—</dd>
+      <dt>Размер prompt</dt><dd id="prompt-size">—</dd>
+      <dt>Размер handoff</dt><dd id="handoff-size">—</dd>
+      <dt>Длительность сессии</dt><dd id="session-duration">—</dd>
+    </dl>
+  </section>
+
+  <section class="panel panel-limits">
+    <h2>Лимиты Claude</h2>
+    <div id="auth-state" class="muted">Состояние доступа неизвестно.</div>
+    <dl class="kv">
+      <dt>Ближайший reset лимита</dt><dd id="limit-reset">—</dd>
+      <dt>Usage / billing</dt><dd class="muted">Точный расход токенов и стоимость текущей сессии не измеряется этим интерфейсом — см. журнал сессий задачи для приблизительных значений (approx tokens).</dd>
+    </dl>
+  </section>
+
+  <section class="panel panel-queue">
+    <h2>Очередь</h2>
+    <table id="queue-table">
+      <thead>
+        <tr>
+          <th>ID</th><th>Название</th><th>Приоритет</th><th>Статус</th>
+          <th>Release</th><th>Owner</th><th>Причина блокировки</th><th>Действия</th>
+        </tr>
+      </thead>
+      <tbody id="queue-body"></tbody>
+    </table>
+  </section>
+
+  <section class="panel panel-logs">
+    <h2>Логи</h2>
+    <div class="logs-toolbar">
+      <input id="log-search" type="text" placeholder="Поиск по тексту лога…">
+      <button id="btn-copy-log" class="btn btn-small" title="Скопировать видимый фрагмент (секреты уже замаскированы сервером)">Копировать фрагмент</button>
+    </div>
+    <pre id="log-view">Выберите «Открыть лог» в очереди, чтобы увидеть содержимое.</pre>
+  </section>
+
+  <section class="panel panel-events">
+    <h2>История событий</h2>
+    <div id="events-list" class="events-list"></div>
+  </section>
+</main>
+
+<div id="confirm-modal" class="modal hidden">
+  <div class="modal-box">
+    <p id="confirm-text"></p>
+    <div class="modal-actions">
+      <button id="confirm-cancel" class="btn">Отмена</button>
+      <button id="confirm-ok" class="btn btn-danger">Подтвердить</button>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
