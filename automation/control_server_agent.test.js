@@ -58,7 +58,6 @@ async function freshServerEnv() {
   process.env.EGO_OS_RUNNER_LOCAL_DIR = localDir;
   process.env.EGO_OS_RUNNER_CLAUDE_PATH = path.join(__dirname, "test_fixtures", "fake_claude.cmd");
   process.env.EGO_OS_CONTROL_LOCK = path.join(localDir, "control-server.lock");
-  process.env.EGO_OS_CONTROL_WEB_DIR = path.join(__dirname, "web");
   process.env.EGO_OS_AGENT_TOKEN_FILE = path.join(localDir, "agent_token");
   process.env.EGO_OS_AGENTS_FILE = path.join(localDir, "agents.json");
   delete process.env.EGO_OS_RUNNER_QUEUE_DIR;

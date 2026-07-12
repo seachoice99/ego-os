@@ -59,7 +59,6 @@ async function freshServerEnv() {
   process.env.EGO_OS_RUNNER_LOCAL_DIR = localDir;
   process.env.EGO_OS_RUNNER_CLAUDE_PATH = path.join(__dirname, "test_fixtures", "fake_claude.cmd");
   process.env.EGO_OS_CONTROL_LOCK = lockFile;
-  process.env.EGO_OS_CONTROL_WEB_DIR = path.join(__dirname, "web");
   delete process.env.EGO_OS_RUNNER_QUEUE_DIR;
   delete require.cache[require.resolve("./claude_task_runner.js")];
   delete require.cache[require.resolve("./runner_control.js")];

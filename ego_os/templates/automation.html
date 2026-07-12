@@ -40,17 +40,37 @@
     .events-list { max-height: 260px; overflow: auto; font-size: 0.85rem; }
     .event-row { padding: 0.35rem 0; border-bottom: 1px solid var(--card-border); }
     .event-row .ts { color: var(--muted); margin-right: 0.5rem; }
+
+    /* casual grouped queue cards */
+    .queue-groups { display: flex; flex-direction: column; gap: 10px; }
+    .group-card { background: var(--card-bg-alt); border: 1px solid var(--card-border); border-radius: 8px; padding: 12px 14px; cursor: grab; }
+    .group-card.drag-over { border-color: var(--link); box-shadow: 0 0 0 1px var(--link) inset; }
+    .group-card-attention { border-color: var(--danger); }
+    .group-card-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .drag-handle { color: var(--muted); font-size: 16px; cursor: grab; user-select: none; }
+    .group-card-title { flex: 1; min-width: 200px; }
+    .group-name { font-weight: 700; }
+    .group-card-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .group-card-body { margin-top: 12px; border-top: 1px solid var(--card-border); padding-top: 10px; cursor: default; }
+    .group-card-body.hidden { display: none; }
+    .task-row[draggable="true"] { cursor: grab; }
+    .task-row.drag-over { outline: 2px solid var(--link); outline-offset: -2px; }
+
+    /* limits panel */
+    .usage-executors { display: flex; flex-direction: column; gap: 10px; }
+    .usage-card { background: var(--card-bg-alt); border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 12px; }
+    .usage-title { font-weight: 700; margin-bottom: 4px; }
   </style>
 </head>
 <body>
   <p><a href="/dashboard">&larr; к Dashboard</a> &middot; <a href="/">Command</a></p>
   <h1>Автоматизация</h1>
-  <p class="subtitle">Управление autonomous task runner &mdash; читает и командует через уже существующий control server (127.0.0.1, не публичный порт).</p>
+  <p class="subtitle">Управление autonomous task runner &mdash; читает и командует через уже существующий control server (127.0.0.1, не публичный порт, физически на этой же машине).</p>
 
   {% if not control_server_available %}
   <div class="unavailable-banner">
     Control server (очередь и координация) недоступен на этом сервере (нет ответа на 127.0.0.1). Проверьте
-    <code>systemctl status ego-os-coordinator</code> на сервере.
+    <code>systemctl status ego-os-runner</code> на сервере.
   </div>
   {% elif not any_agent_online %}
   <div class="unavailable-banner">
@@ -102,7 +122,7 @@
     <h2>Текущая задача</h2>
     {% if current_task %}
     <dl class="kv">
-      <dt>ID</dt><dd><strong>{{ current_task.id }}</strong> &mdash; {{ current_task.title }}</dd>
+      <dt>ID</dt><dd><strong>{{ current_task.id }}</strong> &mdash; {{ current_task.display_summary or current_task.title }}</dd>
       <dt>Статус</dt><dd><span class="status-{{ current_task.status }}">{{ current_task.status }}</span></dd>
       <dt>Приоритет</dt><dd>{{ current_task.priority }}</dd>
       <dt>Executor</dt><dd>claude <span class="subtitle" style="margin:0;">(codex — schema-only, ещё не реализован)</span></dd>
@@ -127,6 +147,39 @@
   </section>
 
   <section>
+    <h2>Лимиты</h2>
+    <div class="usage-executors">
+      {% for label, key in [("Claude", "claude"), ("Codex", "codex")] %}
+      {% set u = usage[key] if usage else None %}
+      {% set rl = u.rate_limits if u and u.rate_limits else None %}
+      <div class="usage-card">
+        <div class="usage-title">{{ label }}</div>
+        {% if not u or (not u.total_sessions and not rl) %}
+        <p class="subtitle" style="margin:0;">Нет данных — сессий ещё не было.</p>
+        {% else %}
+        <dl class="kv">
+          {% if rl %}
+          <dt>Статус лимитов</dt><dd>{{ rl.status }}{% if rl.error %} ({{ rl.error }}){% endif %}</dd>
+          {% if rl.primary and rl.primary.remaining_percent is not none %}
+          <dt>5ч окно</dt><dd>{{ rl.primary.remaining_percent }}% remaining{% if rl.primary.resets_at %}, сброс {{ rl.primary.resets_at }}{% endif %}</dd>
+          {% endif %}
+          {% if rl.secondary and rl.secondary.remaining_percent is not none %}
+          <dt>Недельное окно</dt><dd>{{ rl.secondary.remaining_percent }}% remaining{% if rl.secondary.resets_at %}, сброс {{ rl.secondary.resets_at }}{% endif %}</dd>
+          {% endif %}
+          <dt>Проверено</dt><dd>{{ rl.checked_at }}</dd>
+          {% endif %}
+          {% if u.total_sessions %}
+          <dt>Сессий всего</dt><dd>{{ u.total_sessions }}</dd>
+          <dt>Стоимость всего</dt><dd>${{ "%.4f"|format(u.total_cost_usd) }}</dd>
+          {% endif %}
+        </dl>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section>
     <h2>Последний лог</h2>
     {% if latest_log %}
     <p class="subtitle" style="margin:0 0 0.5rem;">{{ latest_log.file }}{% if latest_log.truncated %} (показан хвост){% endif %}</p>
@@ -138,42 +191,67 @@
 
   <section>
     <h2>Очередь</h2>
-    {% if tasks %}
-    <table>
-      <tr><th>ID</th><th>Название</th><th>Приоритет</th><th>Статус</th><th>Release</th><th>Owner</th><th>Причина блокировки</th><th>Действия</th></tr>
-      {% for t in tasks %}
-      <tr>
-        <td>{{ t.id }}</td>
-        <td>{{ t.title }}</td>
-        <td>{{ t.priority }}</td>
-        <td><span class="status-{{ t.status }}">{{ t.status }}</span></td>
-        <td>{{ t.release }}</td>
-        <td>{{ "да" if t.owner_approved else "нет" }}</td>
-        <td>{{ t.blocked_reason or "—" }}</td>
-        <td class="row-actions">
-          {% if t.status == "ready" %}
-          <form method="post" action="/automation/tasks/{{ t.id }}/hold"><button class="small">Отложить</button></form>
-          {% endif %}
-          {% if t.status == "held" %}
-          <form method="post" action="/automation/tasks/{{ t.id }}/unhold"><button class="small">Вернуть</button></form>
-          {% endif %}
-          {% if t.status in ("failed", "waiting_for_auth", "interrupted") %}
-          <form method="post" action="/automation/tasks/{{ t.id }}/retry" onsubmit="return confirm('Повторить задачу {{ t.id }}?');">
-            <input type="hidden" name="confirm" value="true">
-            <button class="small">Повторить</button>
-          </form>
-          {% endif %}
-          {% if t.status in ("ready", "held", "blocked", "waiting_for_limit", "waiting_for_auth") %}
-          <form method="post" action="/automation/tasks/{{ t.id }}/skip" onsubmit="return confirm('Пропустить задачу {{ t.id }}? Это действие требует причины.');">
-            <input type="hidden" name="confirm" value="true">
-            <input type="text" name="reason" placeholder="причина" required>
-            <button class="small">Пропустить</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
+    <p class="subtitle" style="margin:0 0 0.8rem;">
+      Карточки — крупные инициативы; перетащите карточку, чтобы поменять приоритет относительно других. Разверните карточку,
+      чтобы увидеть и переупорядочить отдельные задачи внутри неё. Приоритет P0-P3 задачи всё равно важнее порядка —
+      перетаскивание решает только очередность среди задач одного приоритета.
+    </p>
+    {% if groups %}
+    <div id="queue-groups" class="queue-groups">
+      {% for g in groups %}
+      <div class="group-card{% if g.needs_attention %} group-card-attention{% endif %}" draggable="true" data-group-card="{{ g.key }}">
+        <div class="group-card-header">
+          <span class="drag-handle" title="Перетащите, чтобы изменить приоритет">&#10495;</span>
+          <div class="group-card-title">
+            <div class="group-name">{{ g.name }}</div>
+            <div class="subtitle" style="margin:0;">{{ g.casual_summary }}</div>
+          </div>
+          <div class="group-card-meta">
+            {% if g.needs_attention %}<span class="status-danger">нужно ваше внимание</span>{% endif %}
+            <span class="subtitle" style="margin:0;">{{ g.done_count }}/{{ g.total_count }} выполнено</span>
+            <button type="button" class="small toggle-group" data-toggle-group="{{ g.key }}">Технический список</button>
+          </div>
+        </div>
+        <div class="group-card-body hidden" data-group-body="{{ g.key }}">
+          <table>
+            <tr><th>ID</th><th>Название</th><th>Приоритет</th><th>Статус</th><th>Release</th><th>Owner</th><th>Причина блокировки</th><th>Действия</th></tr>
+            {% for t in g.tasks %}
+            <tr class="task-row" draggable="{{ 'true' if t.status == 'ready' else 'false' }}" data-row-id="{{ t.id }}" data-group="{{ g.key }}">
+              <td>{{ t.id }}</td>
+              <td>{{ t.title }}</td>
+              <td>{{ t.priority }}</td>
+              <td><span class="status-{{ t.status }}">{{ t.status }}</span></td>
+              <td>{{ t.release }}</td>
+              <td>{{ "да" if t.owner_approved else "нет" }}</td>
+              <td>{{ t.blocked_reason or "—" }}</td>
+              <td class="row-actions">
+                {% if t.status == "ready" %}
+                <form method="post" action="/automation/tasks/{{ t.id }}/hold"><button class="small">Отложить</button></form>
+                {% endif %}
+                {% if t.status == "held" %}
+                <form method="post" action="/automation/tasks/{{ t.id }}/unhold"><button class="small">Вернуть</button></form>
+                {% endif %}
+                {% if t.status in ("failed", "waiting_for_auth", "interrupted") %}
+                <form method="post" action="/automation/tasks/{{ t.id }}/retry" onsubmit="return confirm('Повторить задачу {{ t.id }}?');">
+                  <input type="hidden" name="confirm" value="true">
+                  <button class="small">Повторить</button>
+                </form>
+                {% endif %}
+                {% if t.status in ("ready", "held", "blocked", "waiting_for_limit", "waiting_for_auth") %}
+                <form method="post" action="/automation/tasks/{{ t.id }}/skip" onsubmit="return confirm('Пропустить задачу {{ t.id }}? Это действие требует причины.');">
+                  <input type="hidden" name="confirm" value="true">
+                  <input type="text" name="reason" placeholder="причина" required>
+                  <button class="small">Пропустить</button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </table>
+        </div>
+      </div>
       {% endfor %}
-    </table>
+    </div>
     {% else %}
     <p>Очередь пуста или control server недоступен.</p>
     {% endif %}
@@ -194,5 +272,7 @@
       {% endfor %}
     </div>
   </section>
+
+  <script src="/static/automation.js"></script>
 </body>
 </html>

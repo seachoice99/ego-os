@@ -19,7 +19,7 @@ def fake_bridge(monkeypatch):
     confirm:true) without ever reaching a real control server."""
     from ego_os import automation_bridge
 
-    calls = {"runner_commands": [], "task_actions": []}
+    calls = {"runner_commands": [], "task_actions": [], "reorders": []}
     state = {
         "status": {"ok": True, "status_code": 200, "data": {
             "runner_state": "idle", "pid": 4242, "updated_at": "2026-07-12T10:00:00Z",
@@ -29,6 +29,11 @@ def fake_bridge(monkeypatch):
         "events": {"ok": True, "status_code": 200, "data": {"events": []}},
         "task_detail": {"ok": True, "status_code": 200, "data": {"task": None}},
         "logs": {"ok": False, "status_code": None, "data": None},
+        "usage": {"ok": True, "status_code": 200, "data": {"usage": {
+            "claude": {"total_sessions": 0, "total_cost_usd": 0, "last_session": None},
+            "codex": {"total_sessions": 0, "total_cost_usd": 0, "last_session": None},
+        }}},
+        "reorder_result": {"ok": True, "status_code": 200, "data": {"ok": True}},
     }
 
     monkeypatch.setattr(automation_bridge, "get_status", lambda: state["status"])
@@ -36,6 +41,7 @@ def fake_bridge(monkeypatch):
     monkeypatch.setattr(automation_bridge, "get_events", lambda limit=100: state["events"])
     monkeypatch.setattr(automation_bridge, "get_task", lambda task_id: state["task_detail"])
     monkeypatch.setattr(automation_bridge, "get_logs", lambda file: state["logs"])
+    monkeypatch.setattr(automation_bridge, "get_usage", lambda: state["usage"])
 
     def fake_post_runner_command(command, body=None):
         calls["runner_commands"].append((command, body))
@@ -45,8 +51,13 @@ def fake_bridge(monkeypatch):
         calls["task_actions"].append((task_id, action, body))
         return {"ok": True, "status_code": 200, "data": {"ok": True}}
 
+    def fake_post_reorder(order):
+        calls["reorders"].append(order)
+        return state["reorder_result"]
+
     monkeypatch.setattr(automation_bridge, "post_runner_command", fake_post_runner_command)
     monkeypatch.setattr(automation_bridge, "post_task_action", fake_post_task_action)
+    monkeypatch.setattr(automation_bridge, "post_reorder", fake_post_reorder)
 
     fake_bridge_obj = type("FakeBridge", (), {"calls": calls, "state": state})()
     return fake_bridge_obj
@@ -162,6 +173,139 @@ def test_unknown_task_action_is_rejected(app_client, owner_credentials, csrf_hea
     res = app_client.post("/automation/tasks/DA-03/delete-forever", auth=owner_credentials, headers=csrf_headers)
     assert res.status_code == 404
     assert fake_bridge.calls["task_actions"] == []
+
+
+# --- casual grouped queue cards ---------------------------------------------
+
+def test_queue_renders_as_casual_groups_with_casual_name_and_raw_title_in_technical_table(app_client, owner_credentials, fake_bridge):
+    fake_bridge.state["tasks"] = {"ok": True, "status_code": 200, "data": {"tasks": [
+        {
+            "id": "MED-01", "title": "Multi-Executor Dispatch: Codex CLI recon (read-only)",
+            "display_summary": "Проверяем, что вообще умеет Codex, ничего не ломая",
+            "group_key": "multi-executor", "group_name": "Клод + Кодекс работают вместе",
+            "group_casual_summary": "Один раннер, который сам решает.",
+            "priority": "P1", "status": "ready", "release": "no_deploy", "owner_approved": False,
+            "blocked_reason": None, "sessions_count": 0,
+        },
+    ]}}
+    res = app_client.get("/automation", auth=owner_credentials)
+    assert res.status_code == 200
+    assert "Клод + Кодекс работают вместе" in res.text
+    assert "Один раннер, который сам решает." in res.text
+    # the technical table (inside the collapsed card) always shows the raw
+    # title, never the casual display_summary -- that stays reserved for
+    # the current-task section and the group's own casual name/summary.
+    assert "Multi-Executor Dispatch: Codex CLI recon" in res.text
+
+
+def test_current_task_shows_display_summary_instead_of_raw_title_when_present(app_client, owner_credentials, fake_bridge):
+    fake_bridge.state["status"] = {"ok": True, "status_code": 200, "data": {
+        "runner_state": "running", "pid": 1, "updated_at": "2026-07-12T10:00:00Z", "reason": None,
+        "current_task": {
+            "id": "MED-01", "title": "Multi-Executor Dispatch: Codex CLI recon (read-only)",
+            "display_summary": "Проверяем, что вообще умеет Codex, ничего не ломая",
+            "status": "in_progress", "priority": "P1", "retry_after": None, "summary": None, "sessions_count": 1,
+        },
+    }}
+    res = app_client.get("/automation", auth=owner_credentials)
+    assert "Проверяем, что вообще умеет Codex, ничего не ломая" in res.text
+
+
+def test_queue_groups_show_a_done_over_total_count(app_client, owner_credentials, fake_bridge):
+    fake_bridge.state["tasks"] = {"ok": True, "status_code": 200, "data": {"tasks": [
+        {"id": "DA-01", "title": "t1", "group_key": "ego-os-core", "group_name": "Развитие Ego OS",
+         "group_casual_summary": "s", "priority": "P1", "status": "done", "release": "no_deploy",
+         "owner_approved": False, "blocked_reason": None, "sessions_count": 1},
+        {"id": "DA-02", "title": "t2", "group_key": "ego-os-core", "group_name": "Развитие Ego OS",
+         "group_casual_summary": "s", "priority": "P1", "status": "ready", "release": "no_deploy",
+         "owner_approved": False, "blocked_reason": None, "sessions_count": 0},
+    ]}}
+    res = app_client.get("/automation", auth=owner_credentials)
+    assert "1/2 выполнено" in res.text
+
+
+def test_a_blocked_task_flags_its_group_as_needing_attention(app_client, owner_credentials, fake_bridge):
+    fake_bridge.state["tasks"] = {"ok": True, "status_code": 200, "data": {"tasks": [
+        {"id": "DA-05", "title": "t", "group_key": "ego-os-core", "group_name": "Развитие Ego OS",
+         "group_casual_summary": "s", "priority": "P0", "status": "blocked", "release": "no_deploy",
+         "owner_approved": False, "blocked_reason": "awaiting decision", "sessions_count": 1},
+    ]}}
+    res = app_client.get("/automation", auth=owner_credentials)
+    assert "нужно ваше внимание" in res.text
+
+
+# --- Claude/Codex limits panel ----------------------------------------------
+
+def test_limits_panel_shows_honest_no_data_before_any_session(app_client, owner_credentials, fake_bridge):
+    res = app_client.get("/automation", auth=owner_credentials)
+    assert res.status_code == 200
+    assert "Нет данных" in res.text
+
+
+def test_limits_panel_renders_real_claude_usage(app_client, owner_credentials, fake_bridge):
+    fake_bridge.state["usage"] = {"ok": True, "status_code": 200, "data": {"usage": {
+        "claude": {"total_sessions": 3, "total_cost_usd": 0.42, "last_session": {"task_id": "DA-01"}},
+        "codex": {"total_sessions": 0, "total_cost_usd": 0, "last_session": None},
+    }}}
+    res = app_client.get("/automation", auth=owner_credentials)
+    assert "0.4200" in res.text
+
+
+def test_limits_panel_renders_real_codex_rate_limits_when_present(app_client, owner_credentials, fake_bridge):
+    fake_bridge.state["usage"] = {"ok": True, "status_code": 200, "data": {"usage": {
+        "claude": {"total_sessions": 0, "total_cost_usd": 0, "last_session": None},
+        "codex": {"total_sessions": 0, "total_cost_usd": 0, "last_session": None, "rate_limits": {
+            "status": "available", "checked_at": "2026-07-12T19:59:31.042Z", "plan_type": "pro",
+            "primary": {"remaining_percent": 72, "resets_at": "2026-07-12T23:40:00.000Z"},
+            "secondary": {"remaining_percent": 41, "resets_at": "2026-07-17T18:00:00.000Z"},
+            "error": None,
+        }},
+    }}}
+    res = app_client.get("/automation", auth=owner_credentials)
+    assert "72% remaining" in res.text
+    assert "41% remaining" in res.text
+    assert "available" in res.text
+
+
+# --- drag-and-drop reorder --------------------------------------------------
+
+def test_reorder_requires_owner_auth(app_client, fake_bridge):
+    res = app_client.post("/automation/tasks/reorder", json={"order": ["DA-01", "DA-02"]})
+    assert res.status_code == 401
+    assert fake_bridge.calls["reorders"] == []
+
+
+def test_reorder_without_origin_referer_is_rejected(app_client, owner_credentials, fake_bridge):
+    res = app_client.post("/automation/tasks/reorder", auth=owner_credentials, json={"order": ["DA-01", "DA-02"]})
+    assert res.status_code == 403
+    assert fake_bridge.calls["reorders"] == []
+
+
+def test_reorder_forwards_the_order_to_the_bridge(app_client, owner_credentials, csrf_headers, fake_bridge):
+    res = app_client.post(
+        "/automation/tasks/reorder", auth=owner_credentials, headers=csrf_headers,
+        json={"order": ["DA-02", "DA-01"]},
+    )
+    assert res.status_code == 200
+    assert res.json() == {"ok": True}
+    assert fake_bridge.calls["reorders"] == [["DA-02", "DA-01"]]
+
+
+def test_reorder_rejects_an_empty_or_missing_order(app_client, owner_credentials, csrf_headers, fake_bridge):
+    res = app_client.post("/automation/tasks/reorder", auth=owner_credentials, headers=csrf_headers, json={})
+    assert res.status_code == 400
+    res2 = app_client.post("/automation/tasks/reorder", auth=owner_credentials, headers=csrf_headers, json={"order": []})
+    assert res2.status_code == 400
+    assert fake_bridge.calls["reorders"] == []
+
+
+def test_reorder_propagates_a_control_server_rejection_as_409(app_client, owner_credentials, csrf_headers, fake_bridge):
+    fake_bridge.state["reorder_result"] = {"ok": False, "status_code": 409, "data": {"error": "X depends on Y, which is not done"}}
+    res = app_client.post(
+        "/automation/tasks/reorder", auth=owner_credentials, headers=csrf_headers,
+        json={"order": ["DA-01"]},
+    )
+    assert res.status_code == 409
 
 
 # --- no secrets in the rendered page ----------------------------------------

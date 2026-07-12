@@ -78,6 +78,10 @@ def get_logs(file: str) -> dict:
     return _get("/api/logs", params={"file": file})
 
 
+def get_usage() -> dict:
+    return _get("/api/usage")
+
+
 _RUNNER_COMMANDS = {"start", "pause", "resume", "stop-after-stage", "emergency-stop"}
 
 
@@ -96,3 +100,14 @@ def post_task_action(task_id: str, action: str, body: dict | None = None) -> dic
     if action not in _TASK_ACTIONS:
         return {"ok": False, "status_code": None, "data": None, "error": f"unknown task action: {action}"}
     return _post(f"/api/tasks/{task_id}/{action}", body)
+
+
+def post_reorder(order: list) -> dict:
+    """Forwards a new drag-and-drop order to the control server's existing
+    POST /api/tasks/reorder -- validated here (every id well-formed) as a
+    second, independent check before the control server's own
+    validateReorder() (ready-only, depends_on-respecting), not a
+    replacement for it."""
+    if not isinstance(order, list) or not order or any(not is_safe_task_id(x) for x in order):
+        return {"ok": False, "status_code": None, "data": None, "error": "invalid order: must be a non-empty list of valid task ids"}
+    return _post("/api/tasks/reorder", {"order": order})

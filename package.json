@@ -1,9 +1,9 @@
 {
   "name": "ego-os-automation",
   "private": true,
-  "description": "Launch scripts for the Ego OS autonomous task runner and its local control UI. No dependencies -- automation/ is deliberately dependency-free.",
+  "description": "Launch scripts for the Ego OS autonomous task runner and its local control API. No dependencies -- automation/ is deliberately dependency-free. The UI itself lives in Ego OS's own /automation page (Owner-authenticated), not here.",
   "scripts": {
-    "runner-ui": "node automation/control_server.js",
+    "control-server": "node automation/control_server.js",
     "runner": "node automation/claude_task_runner.js --watch",
     "test": "node --test"
   }

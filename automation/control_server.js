@@ -3,13 +3,22 @@
 
 /**
  * RUNNER-CONTROL-UI: a small, local, dependency-free HTTP control server.
- * Binds to 127.0.0.1 ONLY -- never a public interface. Serves the plain
- * HTML/CSS/JS dashboard under automation/web/ and a minimal JSON API that
- * lets that dashboard observe and safely command the EXISTING runner
- * engine (claude_task_runner.js) -- this file never re-implements process
+ * Binds to 127.0.0.1 ONLY -- never a public interface. Pure JSON API
+ * (`/api/*`) plus the Windows Runner Agent's own machine-authenticated
+ * surface (`/api/agent/*`) -- this file never re-implements process
  * spawning, tree-kill, task loading, or state-machine rules; it only
  * spawns/monitors the engine and reads/writes the same file-based control
  * protocol the engine itself already honors (automation/runner_control.js).
+ *
+ * There is deliberately no HTML/CSS/JS dashboard served from here anymore.
+ * This server runs co-located with production Ego OS (systemd
+ * `ego-os-runner.service`, see automation/README.md) -- the Owner's browser
+ * can never reach 127.0.0.1 on that machine directly, so a standalone
+ * dashboard here was unreachable in practice. The one real UI is Ego OS's
+ * own Owner-authenticated `/automation` page (ego_os/templates/automation.html,
+ * via ego_os/automation_bridge.py calling this same JSON API on the same
+ * host) -- that is where casual project cards, drag-and-drop priority, and
+ * the Claude/Codex usage panel actually live now.
  */
 
 const http = require("http");
@@ -38,7 +47,6 @@ const {
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.EGO_OS_CONTROL_PORT) || 4756;
 const MAX_BODY_BYTES = 64 * 1024;
-const WEB_DIR = process.env.EGO_OS_CONTROL_WEB_DIR || path.join(__dirname, "web");
 const CONTROL_LOCK = process.env.EGO_OS_CONTROL_LOCK || path.join(path.dirname(runner.LOCK), "ego-os-control-server.lock");
 const LOG_LINE_LIMIT = 500;
 const EVENTS_LIMIT_DEFAULT = 200;
@@ -241,21 +249,6 @@ function readJsonBody(req) {
     });
     req.on("error", () => settleReject({ status: 400, message: "error reading request body" }));
   });
-}
-
-const STATIC_CONTENT_TYPES = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "application/javascript; charset=utf-8" };
-
-function serveStatic(req, res, urlPath) {
-  const rel = urlPath === "/" ? "index.html" : urlPath.replace(/^\/+/, "");
-  const resolved = path.resolve(WEB_DIR, rel);
-  const normalizedWebDir = path.resolve(WEB_DIR) + path.sep;
-  if (!resolved.startsWith(normalizedWebDir) || !fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
-    sendJson(res, 404, { error: "not found" });
-    return;
-  }
-  const ext = path.extname(resolved);
-  res.writeHead(200, { "Content-Type": STATIC_CONTENT_TYPES[ext] || "application/octet-stream" });
-  fs.createReadStream(resolved).pipe(res);
 }
 
 // --- route handlers -----------------------------------------------------
@@ -643,7 +636,6 @@ async function router(req, res) {
     if (req.method === "POST" && url.pathname === "/api/agent/report-result") return await handleAgentReportResult(req, res);
     if (req.method === "POST" && url.pathname === "/api/agent/request-deploy") return await handleAgentRequestDeploy(req, res);
 
-    if (req.method === "GET") return serveStatic(req, res, url.pathname);
     sendJson(res, 404, { error: "not found" });
   } catch (error) {
     sendJson(res, 500, { error: "internal error", detail: error.message });
@@ -707,7 +699,7 @@ module.exports = {
   start, router, isRunnerActuallyRunning, readRunnerState, readEvents, writeCommand, startRunnerEngine,
   acquireControlLock, releaseControlLock,
   getOrCreateAgentToken, readAgents, writeAgents, touchAgent, authenticateAgentToken, authenticateAgentRequest, summarizeAgents,
-  HOST, PORT, MAX_BODY_BYTES, WEB_DIR, CONTROL_LOCK, AGENT_TOKEN_FILE, AGENTS_FILE,
+  HOST, PORT, MAX_BODY_BYTES, CONTROL_LOCK, AGENT_TOKEN_FILE, AGENTS_FILE,
 };
 
 if (require.main === module) {

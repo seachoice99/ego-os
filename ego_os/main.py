@@ -216,6 +216,33 @@ def _latest_log_tail(task_detail: dict | None) -> dict | None:
     return logs["data"]
 
 
+def _group_tasks_casually(tasks: list) -> list:
+    """Groups an already-summarized task list (each row already carries
+    group_key/group_name/group_casual_summary/display_summary from
+    runner_control.summarizeTask()) into casual project cards -- never
+    re-derives the id-prefix -> project mapping itself (that logic lives
+    in exactly one place, automation/project_groups.js). Order: first
+    appearance in the list this server already returned, stable and
+    simple rather than re-implementing a priority sort Python-side."""
+    groups: dict[str, dict] = {}
+    for t in tasks:
+        key = t.get("group_key") or "other"
+        if key not in groups:
+            groups[key] = {
+                "key": key,
+                "name": t.get("group_name") or "Другое",
+                "casual_summary": t.get("group_casual_summary") or "",
+                "tasks": [],
+            }
+        groups[key]["tasks"].append(t)
+    attention_statuses = {"blocked", "waiting_for_auth", "failed", "interrupted"}
+    for g in groups.values():
+        g["done_count"] = sum(1 for t in g["tasks"] if t.get("status") == "done")
+        g["total_count"] = len(g["tasks"])
+        g["needs_attention"] = any(t.get("status") in attention_statuses for t in g["tasks"])
+    return list(groups.values())
+
+
 @app.get("/automation")
 def automation_page(request: Request):
     """Owner-authenticated view of the autonomous task runner -- reads the
@@ -224,14 +251,19 @@ def automation_page(request: Request):
     state machine or task loading. Degrades to an honest 'runner control
     server unavailable' state rather than a 500 when that server isn't
     running (e.g. this exact test environment, or before the systemd unit
-    is installed)."""
+    is installed). This is the ONLY UI for the runner -- the standalone
+    local dashboard (automation/web/) was removed since the control server
+    runs co-located with this app and was never reachable from the Owner's
+    own browser."""
     status = automation_bridge.get_status()
     tasks_result = automation_bridge.get_tasks()
     events_result = automation_bridge.get_events(50)
+    usage_result = automation_bridge.get_usage()
 
     current_task = (status.get("data") or {}).get("current_task") if status["ok"] else None
     task_detail = _current_task_detail(current_task)
     last_session = ((task_detail or {}).get("result") or {}).get("sessions", [])[-1:] if task_detail else []
+    tasks = (tasks_result.get("data") or {}).get("tasks", []) if tasks_result["ok"] else []
     return templates.TemplateResponse(
         request,
         "automation.html",
@@ -244,7 +276,9 @@ def automation_page(request: Request):
             "current_task": current_task,
             "current_task_detail": task_detail,
             "last_session": last_session[0] if last_session else None,
-            "tasks": (tasks_result.get("data") or {}).get("tasks", []) if tasks_result["ok"] else [],
+            "tasks": tasks,
+            "groups": _group_tasks_casually(tasks),
+            "usage": (usage_result.get("data") or {}).get("usage") if usage_result["ok"] else None,
             "events": list(reversed((events_result.get("data") or {}).get("events", []))) if events_result["ok"] else [],
             "latest_log": _latest_log_tail(task_detail),
             # Windows Runner Agent (SERVER-RUNNER-DARK-UI): Claude Code
@@ -282,6 +316,26 @@ def automation_task_action(task_id: str, action: str, reason: str = Form(None), 
         body["confirm"] = confirm in ("true", "on", "1")
     automation_bridge.post_task_action(task_id, action, body)
     return RedirectResponse(url="/automation", status_code=303)
+
+
+@app.post("/automation/tasks/reorder")
+async def automation_tasks_reorder(request: Request):
+    """The one JS-initiated call on this page (drag-and-drop can't be
+    expressed as a plain HTML form) -- JSON body, not Form(), since it's
+    called via fetch() from automation.js, not submitted by a <form>. The
+    page's own Origin/Referer already satisfies verify_csrf's global
+    dependency, exactly like every other state-changing route here."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON body")
+    order = body.get("order") if isinstance(body, dict) else None
+    if not isinstance(order, list) or not order:
+        raise HTTPException(status_code=400, detail="'order' must be a non-empty list of task ids")
+    result = automation_bridge.post_reorder(order)
+    if not result["ok"]:
+        raise HTTPException(status_code=409, detail=(result.get("data") or {}).get("error") or result.get("error") or "reorder failed")
+    return {"ok": True}
 
 
 @app.get("/employees/{employee_id}")
