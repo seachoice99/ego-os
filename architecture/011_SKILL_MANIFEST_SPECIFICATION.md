@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted by Owner on 2026-07-10 for implementation planning under ADR-0004 and ADR-0005. No registry or loader is implemented by this document.
+Accepted by Owner on 2026-07-10 under ADR-0004 and ADR-0005. **A registry and loader implementing this exact manifest specification now exist** (`ego_os/skills.py`, SR-01, Owner-approved per `ADR-0017`, 2026-07-13).
 
 ## Canonical representation
 

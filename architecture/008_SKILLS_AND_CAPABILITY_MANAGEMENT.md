@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Proposed design. This document defines the target architecture; it does not authorize implementation, Employee migration, dependency installation, external execution, or production changes.
+**Implemented for SR-01 through SR-04** (Owner-approved per `ADR-0017`, 2026-07-13): the Skill Registry foundation, Employee Skill references, the first internal Skill, and the Skills UI/audit trail described here are real, shipped, tested code (`ego_os/skills.py`, `tests/test_skills_registry.py` and siblings) — this is no longer a "does not authorize implementation" placeholder for that scope. Anything in this document describing further capability beyond SR-01–04's actual shipped scope (e.g. a package-manager-style external installer, automated Employee migration tooling) remains a **Proposed design** requiring its own fresh Owner authorization before implementation, exactly as before.
 
 ## Relationship to existing architecture
 

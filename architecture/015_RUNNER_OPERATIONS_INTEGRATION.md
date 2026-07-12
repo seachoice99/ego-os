@@ -2,6 +2,8 @@
 
 Implements ADR-0009. Read this before implementing any RCI-* task — the boundary rules here are the whole point of the epic, not incidental detail.
 
+**2026-07-13 update:** the topology this document was written against has changed (the control server now runs co-located with Ego OS itself, per `automation/WINDOWS_AGENT_VERIFICATION.md`, not only on a separate machine the Owner's browser could reach directly), and the "Ego OS never POSTs to the control server" rule below (Elevation of Privilege row, and the "Forbidden, permanently" list) is **narrowly superseded by `ADR-0013`** for exactly the safe, loopback-only, Owner-authenticated local scenario ADR-0013 defines — every other row of the STRIDE table and the rest of this document's topology/threat analysis remains authoritative and unchanged. Read `ADR-0013` before assuming the "no POST, ever" language below is still the current rule.
+
 ## Topology (the finding that shapes everything else)
 
 ```text

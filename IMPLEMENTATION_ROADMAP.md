@@ -123,13 +123,15 @@ This is the primary implementation plan for Ego OS. It sequences work that is al
 
 ---
 
-## 📋 Post-v0.5 Initiative — Skills and Capability Management
+## ✅ Skills and Capability Management (SR-01–SR-04 delivered; further capability remains 📋 post-v0.5)
+
+**2026-07-13 reprioritization (`ADR-0017`):** the Owner explicitly reprioritized this ahead of the rest of v0.5's critical-path work, per the "Implementation progress" paragraph below — Registry foundations, Employee Skill references, the first internal Skill, and the Skills UI/audit trail are done, not merely scheduled. Only the remaining, not-yet-built parts of the original objective (controlled community intake beyond ADR-0005's existing untrusted-input pipeline, a full Capability Manager MVP, broader controlled autonomy) are still genuinely `📋 Post-v0.5`.
 
 **Objective:** make reusable capabilities independent, versioned Definitions that multiple Employees can compose, while keeping Tools, Knowledge, permissions, Gate Control, and provider adapters separate.
 
-**Sequence:** definitions and manifest → local Skill Registry → first internal Skills → controlled community intake → Capability Manager MVP → controlled autonomy.
+**Sequence:** definitions and manifest → local Skill Registry → first internal Skills → controlled community intake → Capability Manager MVP → controlled autonomy. **Done:** the first three. **Still 📋 post-v0.5:** the last two.
 
-**Scheduling:** ADR and design review can happen now. Implementation must not preempt current v0.5 critical work unless the Owner explicitly reprioritizes it. Registry foundations are the nearest eligible milestone after that decision; community intake and Capability Manager are later. Automated integration is deliberately deferred until permissions, sandboxing, evaluations, audit, rollback, and kill switches have operational evidence.
+**Scheduling (historical):** ADR and design review happened first; implementation was originally deferred pending explicit reprioritization. That reprioritization happened (see above) and Registry-foundations-through-first-internal-Skill shipped. Automated community-intake integration remains deliberately deferred until permissions, sandboxing, evaluations, audit, rollback, and kill switches have operational evidence, unchanged from the original plan.
 
 **Dependencies:** accepted ADR-0004 and ADR-0005. Full task sequence and approval gates: `tasks/SKILLS_AND_CAPABILITY_MANAGEMENT.md`. Architecture: `architecture/008_SKILLS_AND_CAPABILITY_MANAGEMENT.md`.
 

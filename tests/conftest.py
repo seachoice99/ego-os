@@ -95,7 +95,11 @@ def fake_model_complete(monkeypatch):
 
     state = {"responses": {}, "calls": []}
 
-    def fake_complete(capability, prompt, max_tokens=1024):
+    def fake_complete(capability, prompt, max_tokens=1024, task_id=None, task_budget_cents=None):
+        # task_id/task_budget_cents (ADR-0016) are accepted here but never
+        # enforced -- these tests are about lifecycle/QA behavior, not
+        # budget enforcement, which has its own dedicated test file
+        # (tests/test_budget_ledger.py) against the real store.reserve_budget.
         state["calls"].append((capability, prompt))
         behavior = state["responses"].get(capability)
         if behavior is None:

@@ -1,91 +1,52 @@
 # Core Entities
 
-## Company
+Canonical, as of the 2026-07-13 architecture-correction pass. Every entity below states: authoritative owner (who may create/change it), identity (how it's uniquely referenced), versioning, persistence, lifecycle, relations, authorization boundary, and implementation status (`implemented` / `partial` / `planned`). "NEW ... this pass" marks a table/field this correction pass adds; everything else already existed before 2026-07-13.
 
-Digital organization owned by the user.
+Grouped per `architecture/000_SYSTEM_ARCHITECTURE.md`'s three layers: Definitions, Runtime Records, Infrastructure.
 
-Fields:
+## Definitions
 
-- id
-- name
-- owner
-- departments
-- employees
-- projects
-- policies
-- budget
+| Entity | Authoritative owner | Identity | Versioning | Persistence | Lifecycle | Relations | Authorization boundary | Status |
+|---|---|---|---|---|---|---|---|---|
+| **Company** | Owner | implicit singleton (Ego OS models exactly one company) | not versioned | `mandate` table carries the company-level mission/capital/risk policy; no separate `companies` table | set once, amended by a new Owner mandate | owns Departments, Employees, Projects | Owner-only | partial — mandate is persisted; there is no dedicated `Company` row distinct from `mandate` |
+| **Department** | Owner (implicit, via Employee registration) | a name string (`Executive`, `Finance`, `Quality`, ...) | not versioned | `employees.department` column only | fixed at Employee-registration time | groups Employees | not independently authorized — it is descriptive, not a gate | partial — a field, not its own entity/table |
+| **Project** | Orchestrator (creation), Owner (policy) | `projects.id` | not versioned | `projects` table | created → active (no archival/lifecycle beyond creation exists yet) | owns ProductTasks and DigitalAssets | Owner Auth on every route that touches it | implemented (persistence); partial (no further lifecycle states) |
+| **Employee** | Owner, via `company/EMPLOYEE_REGISTRY.md` + `company/employees/core/*.yaml` | `employees.id` (e.g. `writer`, `cfo`, `qa`) | `version` field; old Reports/ExecutionEvents keep referencing the exact version that performed the work (ADR-0002) | `employees` table, source-of-truth YAML on disk, synced by `ego_os/employees.py`'s `sync_from_registry()` | registered → `idle`/active (`employees.status`) → superseded by a new version | `required_capabilities` resolve to Tools/Skills; staffed onto a ProductTask via Assignment | Owner-only to add/update (edits a YAML file); no self-modification at runtime | implemented for `cfo`/`qa`/`orchestrator`/`researcher`/`writer`/`designer`/`coder`. **`pm` is registered in `EMPLOYEE_REGISTRY.md` with no corresponding YAML file and is `planned`, not runtime-active** — it must not be described as tracking execution today (`architecture/018` C-08). |
+| **Persona** | The owning Employee's `mission`/`responsibilities` fields | none dedicated | versioned together with the owning Employee | embedded in Employee YAML; no separate table | n/a | 1:1 with Employee | none beyond the Employee's own | planned as a distinct entity — today Persona is inseparable from Employee fields |
+| **Skill** | Skill author; Owner-approved via the ADR-0004/ADR-0005 pipeline | `id@version` (`architecture/011_SKILL_MANIFEST_SPECIFICATION.md`) | semantic version; a version, once published, is immutable | filesystem manifests (`skills/registry/`), digest-verified; audit trail in `skill_audit_events` | discovered → validated → approved/rejected → attached/detached → deprecated/revoked (fail-closed on revoked) | referenced by Employees; a Skill's `requirements` never grant a permission by themselves (ADR-0004) | community Skills are untrusted input until approved (ADR-0005); a Skill never expands an Employee's permissions, enforced by construction (`ego_os/lifecycle.py` never reads permissions from a resolved Skill) | implemented — SR-01 through SR-04 are Owner-approved and shipped (`ADR-0017`) |
+| **Policy** | Owner | implicit (Gate Control tiers, `architecture/006_AUTONOMOUS_COMPANY_ARCHITECTURE.md`) | not versioned as queryable data | not persisted as its own queryable record today | set by Owner mandate | governs Gate Control decisions for external/irreversible actions | Owner-only | planned — conceptually defined in `architecture/006`, no runtime `Policy` record exists yet |
+| **Mandate** | Owner | `mandate.id` | `version` field | `mandate` table | recorded once, amended by a new, explicit Owner decision | company-level policy input; **distinct from `BudgetLedgerEvent`** — `mandate.starting_capital` is a business-mandate figure, never the AI/model/tool operating budget (`ADR-0016`) | Owner-only | implemented |
 
-## Employee
+## Runtime Records
 
-Replaceable competence container.
+| Entity | Authoritative owner | Identity | Versioning | Persistence | Lifecycle | Relations | Authorization boundary | Status |
+|---|---|---|---|---|---|---|---|---|
+| **ProductTask** | Orchestrator (creation/planning), Owner (approval gates) | `tasks.id` (integer, SQLite auto-increment) | not versioned individually — each is one immutable request | `tasks` table | `ADR-0014`'s state machine (`architecture/002_TASK_LIFECYCLE.md`'s transition table) | belongs to a Project; has a Plan, zero or more Clarifications/Subtasks/Assignments, many ExecutionEvents, one terminal Report, optional Memory | Owner Auth + CSRF on every route | implemented; this pass adds `needs_owner_review`/`waiting_for_clarification` enforcement and a single transition-checking function (`ADR-0014`) |
+| **ProductTaskPlan** | Orchestrator | one per ProductTask | not versioned | **NEW this pass**: `product_task_plans` table | created during Planning, read-only once Staffing begins | belongs to exactly one ProductTask | Owner Auth (read); system-only write | planned → implemented this pass (persistence + minimum fields; the Orchestrator's own planning prompt populating every field richly is a further refinement) |
+| **Clarification** | Orchestrator (asks), Owner (answers) | one row per question | not versioned | **NEW this pass**: `clarifications` table | asked → answered → Planning resumes | belongs to a ProductTask | Owner Auth | planned — this pass ships the persisted contract; the full ask-and-resume runtime inside `ego_os/lifecycle.py` is named as an at-risk/deferred item in this pass's final report if it does not fit safely alongside the QA-gate rework |
+| **Subtask** | Orchestrator | none — no runtime concept exists today | n/a | not persisted | n/a | would belong to a ProductTask, with dependencies among Subtasks | n/a | planned — contract-only per `ADR-0014`; today's runtime always assigns exactly one specialist per ProductTask (`architecture/018` C-07), consistent with `product_bible/004_MVP_SCOPE.md`'s own exclusion of "complex parallel orchestration" from MVP |
+| **Assignment** | Orchestrator | none — today only a flat list | n/a | today: `reports.employees_involved` (a flat list of 3 fixed roles: orchestrator/specialist/qa); no per-Subtask Assignment record | n/a | would link an Employee to a (Sub)Task | n/a | planned |
+| **ExecutionEvent** | system (logged inline by `ego_os/lifecycle.py`) | `execution_events.id` | not versioned; append-only | `execution_events` table | append-only, never updated or deleted | belongs to a ProductTask; records the Employee version, capability, model, tool, and cost of one step | read via Owner-authed routes only | implemented — the append-only operational source of truth (`ADR-0014`) |
+| **Report** | system (built from ExecutionEvents) | `reports.task_id` (1:1 with ProductTask) | **NEW this pass**: `schema_version` field | `reports` table | created once per terminal ProductTask state | 1:1 with ProductTask; a projection over that ProductTask's ExecutionEvents, never an independent second source of the same facts | Owner Auth (read) | implemented for the successful-delivery path; this pass extends Report creation to every terminal state (`delivered`/`failed`/`cancelled`/`needs_owner_review`/`gap_rejected`, `ADR-0014`) |
+| **Memory** | system | `memory.id` | not versioned | `memory` table | created on delivery; read-only after | belongs to a ProductTask | Owner Auth (read) | implemented |
+| **EmployeeProposal** | Orchestrator (drafts), Owner (decides) | `employee_proposals.id` | not versioned | `employee_proposals` table | `pending → approved/rejected` | belongs to the ProductTask whose capability gap triggered it (`task_id`) | Owner-only approve/reject | implemented for drafting + the Owner decision itself; this pass adds the EmployeeProvisioningTask this decision creates (previously a dead end — approving changed two status strings and provisioned nothing, `architecture/018` C-10) |
+| **EmployeeProvisioningTask** | Owner (approves), system (drafts) | **NEW this pass** — an AutomationTask-shaped id (it edits repository files, so it is an AutomationTask per `ADR-0015`) | not versioned | **NEW this pass**: linkage field(s) connecting it to the originating EmployeeProposal/ProductTask | approved → provisioning → complete → originating ProductTask is replanned | references its originating EmployeeProposal and ProductTask explicitly (`ADR-0015`'s reference-field rule) | dangerous/external permissions on the proposed Employee require an additional, explicit Owner confirmation beyond the original proposal approval | planned → implemented this pass as a persisted record + linkage; **unattended generation of the actual Employee YAML remains a further, separately-scoped decision, not built this pass** |
+| **DigitalAsset** | system (nominates), Owner (accepts/rejects) | `digital_assets.id` | not versioned individually | `digital_assets` table | `candidate → accepted/rejected → internally_validated → archived` (`architecture/013_DIGITAL_ASSET_MODEL.md`; mapping table added this pass) | references its source ProductTask (`source_task_id`) and Project | Owner-only accept/reject/archive; `internally_validated` requires a real validation pass plus a monetization thesis | implemented |
+| **DigitalAssetEvent** | system/Owner | `digital_asset_events.id` | append-only | `digital_asset_events` table | append-only | belongs to a DigitalAsset | Owner Auth (read); write only via `transition_asset`'s enforced transition map | implemented |
+| **BudgetLedgerEvent** | system (records), Owner (approves/adjusts) | `budget_ledger_events.id` | append-only | **NEW this pass**: `budget_ledger_events` table (`ADR-0016`) | append-only (`budget_approved`, `task_reserved`, `spend_recorded`, `reservation_released`, `adjustment_approved`, `budget_exhausted`) | may reference a ProductTask (reservation/spend) or be company-global (`budget_approved`) | Owner-only for `budget_approved`/`adjustment_approved` | planned → implemented this pass |
+| **ApprovalDecision** | Owner | none unified today | n/a | recorded inline per entity today (`employee_proposals.status`, `digital_assets.owner_decision`, a task's own `owner_approved` flag) — no single `ApprovalDecision` table | n/a | attaches to whichever Runtime Record it approves | Owner-only | partial — every individual approval is real and persisted, but there is no single unified `ApprovalDecision` record type; named as a gap, not fixed this pass |
 
-Fields:
+## Infrastructure
 
-- id
-- name
-- avatar
-- title
-- department
-- mission
-- responsibilities
-- skills
-- instructions
-- required_capabilities
-- tools
-- permissions
-- reporting_rules
-- cost_policy
-- version
-
-## Project
-
-Long-term context container.
-
-Fields:
-
-- id
-- name
-- status
-- vision
-- context
-- decisions
-- tasks
-- artifacts
-- memory
-
-## Task
-
-Unit of work.
-
-Fields:
-
-- id
-- title
-- user_request
-- project_id
-- status
-- priority
-- owner_employee
-- assigned_employees
-- plan
-- logs
-- result
-- cost_report
-- QA_report
-
-## Report
-
-Mandatory transparency object.
-
-Fields:
-
-- task_id
-- employees_involved
-- timeline
-- decisions
-- tools_used
-- models_used
-- token_usage
-- cost
-- outputs
-- open_questions
+| Entity | Authoritative owner | Identity | Versioning | Persistence | Lifecycle | Relations | Authorization boundary | Status |
+|---|---|---|---|---|---|---|---|---|
+| **Model Provider** | Infrastructure (OpenRouter-compatible) | an API endpoint + key | n/a | `.env` (`OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL`) | n/a | called only through the Model Adapter | never exposed to the Owner UI; server-side only | implemented |
+| **Model Adapter** | Infrastructure | `ego_os/model_provider.py` | n/a | code | n/a | maps a required capability to a concrete model + price | internal only | partial — the capability→model mapping exists, but today every capability resolves to the same single model (`architecture/018` C-12); real multi-dimensional selection (quality tier/latency/context/modality/availability/privacy, `ADR-0016`) is a named, partially-addressed gap |
+| **Tool** | the Employee invoking it, via its own `permissions` | a tool name string | n/a | code (`ego_os/tools.py`) | n/a | invoked only within an Employee's granted `permissions` | gated exclusively by Employee permissions, never by a Skill's requirements | implemented |
+| **Skills Registry** | system | filesystem manifests | per-Skill semantic version | `skills/registry/` + `skill_audit_events` | see Skill, Definitions layer | resolves Skill references requested by Employees | fail-closed on revoked/incompatible/unapproved | implemented (`ADR-0017`) |
+| **Background Worker** | system | one worker process | n/a | `tasks.run_state` column | `queued → running → completed/failed/cancelled` | drives ProductTask execution; distinct from ProductTask's own `status` (`ADR-0014`) | internal only | implemented |
+| **Automation Queue** | Owner (task authoring) | `tasks/queue/*.yaml` filename | n/a | Git-tracked YAML files | `ready → in_progress → testing → deploying → done`, plus `blocked`/`waiting_for_limit`/`checkpointing`/`waiting_for_auth`/`interrupted`/`held`/`skipped` (`tasks/queue/README.md`) | holds AutomationTasks | risky AutomationTasks require `owner_approved: true` | implemented |
+| **AutomationTask** | Owner (authoring), Executor (execution) | the queue file's own `id` (human-chosen string) | not versioned | one Git-tracked YAML file | see Automation Queue | may reference an originating ProductTask (the EmployeeProvisioningTask case, `ADR-0015`) | `allowed_paths`/`forbidden_paths`/`risks`/`owner_approved` | implemented |
+| **Executor** | Owner (chooses/authors), system (dispatches) | `claude` \| `codex` \| `auto` \| `openrouter_free` | n/a | a field on the AutomationTask YAML | n/a | dispatches exactly one AutomationTask's child process at a time, never concurrently (`ADR-0012`) | fail-closed on an unimplemented executor value | implemented for `claude`; `codex`/`openrouter_free` are valid schema values with no runtime path yet, rejected fail-closed until their own tasks ship |
+| **Runner Agent** | runs on the Owner's own machine | `agent_id` | n/a | `agents.json` (Control Server) | register → heartbeat → claim → report | executes AutomationTasks claimed from the Automation Queue | its own machine bearer token, never Owner Basic Auth | implemented |
+| **Control Server** | co-located with Ego OS (`ego-os-runner.service`) | one process, loopback-bound | n/a | file-based state (`runner_state.json`, `events.ndjson`) | started/stopped by systemd | mediates between Ego OS, the Runner Agent, and the Automation Queue | loopback-only bind, plus this pass's `ADR-0013` transport hardening | implemented |

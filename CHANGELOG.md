@@ -2,6 +2,8 @@
 
 All notable changes to Ego OS are recorded here, newest first. See `IMPLEMENTATION_ROADMAP.md` for the forward-looking plan this changelog reports against.
 
+**On "[Unreleased]" (`architecture/018` C-17):** every entry below is filed under this one heading by convention, not because it hasn't shipped — this project deploys continuously (see `DEPLOYMENT.md`) rather than cutting dated version releases, so there is no closed "v0.4.1" section to move an entry into. `tasks/queue/*.yaml`'s own `status: "done"` (with a recorded commit and, for `release: automatic` tasks, production deploy/health-check evidence) is the authoritative signal that a given entry actually shipped — treat "[Unreleased]" here as "chronological, not versioned," never as "not yet live."
+
 ## [Unreleased] — Local runner control panel (RUNNER-CONTROL-UI)
 
 ### Added

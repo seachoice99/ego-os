@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted by Owner on 2026-07-10 for implementation planning under ADR-0004. This acceptance does not authorize Registry implementation or Employee migration.
+Accepted by Owner on 2026-07-10 under ADR-0004. **Registry implementation for SR-01 through SR-04 is now Owner-approved and shipped** (`ADR-0017`, 2026-07-13) — the "does not authorize Registry implementation" restriction no longer applies to that already-implemented scope. Employee migration/registry work genuinely beyond SR-01–04 still requires its own fresh authorization.
 
 ## Purpose
 

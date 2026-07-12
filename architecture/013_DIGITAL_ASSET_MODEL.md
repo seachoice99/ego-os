@@ -75,6 +75,24 @@ Disallowed transitions (enforced at the persistence layer, not just the UI):
 - `accepted → internally_validated` without a recorded validation result and its supporting evidence.
 - `rejected → accepted` without a new, distinct Owner decision event (the original rejection event is never overwritten to flip the outcome).
 
+### Conceptual lifecycle ↔ runtime mapping (2026-07-13 audit, `architecture/018` C-15)
+
+`architecture/006_AUTONOMOUS_COMPANY_ARCHITECTURE.md`'s Digital Asset Lifecycle (conceptual) and this document's persisted `digital_assets.status`/`digital_asset_events` (runtime, `ego_os/store.py`) already agree with each other — this table makes that mapping explicit rather than leaving a reader to infer it across two documents. No contradiction was found here during the audit; this is the one area of this pass that needed only documentation, not a fix.
+
+| Conceptual phase (`architecture/006`) | Persisted `status` | Required event (`digital_asset_events.event_type`) | Allowed actor | Gate Control result | Implementation status |
+|---|---|---|---|---|---|
+| Conception / creation | `candidate` | `candidate_created` | `system` (automatic nomination, e.g. DA-03) | none required — a Candidate is not yet a company commitment | implemented |
+| Owner continuation decision (accept) | `accepted` | `owner_accepted` | `owner` only | Owner approval required — an automatic process may never accept its own nomination (ADR-0007, decisions 2–3) | implemented |
+| Owner continuation decision (decline) | `rejected` | `owner_rejected` | `owner` only | Owner approval required | implemented |
+| Internal validation pass + thesis | `internally_validated` | `validation_passed` | `system` or `owner` | requires a recorded `validation_status='passed'` and a non-empty `monetization_thesis` in the same call — no partial/implicit pass | implemented |
+| No longer active | `archived` | `archived` | `system` or `owner` only | — | implemented at the persistence layer; **not yet exposed as an Owner-facing UI action** in DA-01..DA-05 (the status/event exist so a later, explicitly-scoped capability can use them without a schema change) |
+| Monetization (Stage 3 / Controlled Monetization, `architecture/006`) | — | — | Owner, with its own dedicated Gate Control review | requires explicit, separate Owner approval; never triggered by reaching `internally_validated` alone | **planned** |
+| Scaling | — | — | Owner | requires explicit, separate Owner approval | **planned** |
+| Maintenance | — | — | system/Owner | — | **planned** |
+| Retirement (distinct from `archived`) | — | — | Owner | requires explicit, separate Owner approval | **planned** |
+
+DA-03 (automatic nomination) creates a `candidate` and nothing more — it never accepts, publishes, monetizes, or otherwise bypasses the Owner-approval rows above; every row past `candidate`/`rejected` requires an explicit `owner` actor or, for `internally_validated`, a real validation result with its required evidence.
+
 ## 7. Internal Validation
 
 **Internal Validation** is a bounded check, run only against an `accepted` Asset, that re-tests the claims made at Candidate creation against reality — matching `architecture/006` Section 4's "Internal Validation... checked against its own original thesis: does it still hold." It checks, at minimum:

@@ -441,22 +441,97 @@ def submit_mandate(mission: str = Form(...), starting_capital: float = Form(...)
 
 @app.post("/proposals/{proposal_id}/approve")
 def approve_proposal(proposal_id: int):
+    """ADR-0015 (Decision 7): approving records the Owner's decision and
+    creates an EmployeeProvisioningTask -- it does NOT create an Employee
+    directly. Provisioning (drafting the Employee YAML, capabilities,
+    permissions, Skills, tests, and policy validation) happens as its own
+    AutomationTask; a dangerous/external permission set requires a further,
+    separate Owner confirmation (grant_provisioning_extra_approval) before
+    that AutomationTask may even be authored. Once provisioning completes,
+    the original ProductTask is replanned -- not built by this route."""
     proposal = store.get_proposal(proposal_id)
     if proposal is None:
         raise HTTPException(status_code=404)
     store.update_proposal_status(proposal_id, "approved")
     store.update_task_status(proposal["task_id"], "gap_approved")
+    store.create_employee_provisioning_task(proposal_id, proposal["task_id"], permissions=proposal.get("permissions"))
     return RedirectResponse(url="/", status_code=303)
 
 
 @app.post("/proposals/{proposal_id}/reject")
 def reject_proposal(proposal_id: int):
+    """A rejected proposal is a real terminal outcome for its ProductTask
+    (ADR-0014: every terminal state gets a Report)."""
     proposal = store.get_proposal(proposal_id)
     if proposal is None:
         raise HTTPException(status_code=404)
     store.update_proposal_status(proposal_id, "rejected")
-    store.update_task_status(proposal["task_id"], "gap_rejected")
+    task_id = proposal["task_id"]
+    reason = {"category": "capability_gap_rejected", "detail": f"Owner rejected the Employee Creation Proposal: {proposal['title']}"}
+    store.update_task_status(task_id, "gap_rejected", terminal_reason=reason)
+    store.create_report(
+        task_id=task_id, employees_involved=["orchestrator"], timeline=[
+            {"step": "gap", "employee": "orchestrator", "detail": f"Drafted an Employee Creation Proposal ({proposal['title']}) for Owner review."},
+            {"step": "gap_rejected", "employee": "owner", "detail": reason["detail"]},
+        ],
+        input_tokens=proposal["input_tokens"], output_tokens=proposal["output_tokens"], cost=proposal["cost"],
+        result_text=None, qa_note=None, terminal_status="gap_rejected", terminal_reason=reason,
+    )
     return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/tasks/{task_id}/accept-draft")
+def accept_draft(task_id: int):
+    """ADR-0014: from needs_owner_review, the Owner may accept the draft
+    as-is -- this is the explicit Owner approval that authorizes Delivery
+    without a QA PASS. Updates the SAME report row's terminal disposition
+    (never a second create_report call for this task_id)."""
+    task = store.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404)
+    if task["status"] != "needs_owner_review":
+        raise HTTPException(status_code=400, detail="task is not awaiting Owner review")
+    store.update_task_status(task_id, "delivered")
+    store.update_report_terminal_outcome(task_id, "delivered", terminal_reason=None)
+    report = store.get_report(task_id)
+    store.create_memory_entry(
+        task_id, summary=f"Task #{task_id}: Owner accepted the draft after QA review -> delivered.",
+    )
+    return RedirectResponse(url=f"/tasks/{task_id}", status_code=303)
+
+
+@app.post("/tasks/{task_id}/retry-after-review")
+def retry_after_review(task_id: int):
+    """ADR-0014: from needs_owner_review, the Owner may allow exactly one
+    further attempt. lifecycle.run() has no partial-resume mechanism, so
+    this re-runs the full Task Lifecycle for the same request rather than
+    attempting to preserve in-flight state -- a deliberate, honest
+    simplification, not a silent shortcut (see architecture/018's audit
+    and this pass's final report for the full-resume gap this leaves)."""
+    task = store.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404)
+    if task["status"] != "needs_owner_review":
+        raise HTTPException(status_code=400, detail="task is not awaiting Owner review")
+    store.update_task_status(task_id, "revision")
+    store.set_task_run_state(task_id, "queued")
+    worker.enqueue(task_id)
+    return RedirectResponse(url=f"/tasks/{task_id}", status_code=303)
+
+
+@app.post("/tasks/{task_id}/close")
+def close_task(task_id: int):
+    """ADR-0014: from needs_owner_review, the Owner may close the task
+    without delivering it."""
+    task = store.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404)
+    if task["status"] != "needs_owner_review":
+        raise HTTPException(status_code=400, detail="task is not awaiting Owner review")
+    reason = {"category": "owner_cancelled", "detail": "Owner closed the task after QA review without delivering it."}
+    store.update_task_status(task_id, "cancelled", terminal_reason=reason)
+    store.update_report_terminal_outcome(task_id, "cancelled", terminal_reason=reason)
+    return RedirectResponse(url=f"/tasks/{task_id}", status_code=303)
 
 
 @app.post("/tasks")

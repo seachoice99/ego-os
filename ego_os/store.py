@@ -139,6 +139,69 @@ CREATE TABLE IF NOT EXISTS digital_asset_events (
     detail TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ADR-0014: persisted ProductTaskPlan -- architecture/001_CORE_ENTITIES.md
+-- defines Task.plan; before this table, nothing was actually persisted.
+CREATE TABLE IF NOT EXISTS product_task_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id),
+    objective TEXT,
+    deliverables TEXT NOT NULL DEFAULT '[]',
+    selected_employees TEXT NOT NULL DEFAULT '[]',
+    required_capabilities TEXT NOT NULL DEFAULT '[]',
+    allowed_tools TEXT NOT NULL DEFAULT '[]',
+    estimated_cost REAL,
+    task_budget REAL,
+    risks TEXT NOT NULL DEFAULT '[]',
+    assumptions TEXT NOT NULL DEFAULT '[]',
+    qa_acceptance_criteria TEXT NOT NULL DEFAULT '[]',
+    required_approvals TEXT NOT NULL DEFAULT '[]',
+    subtasks TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ADR-0014: persisted Clarification contract. Runtime ask/pause/resume
+-- wiring inside lifecycle.py is tracked separately (see this pass's final
+-- report) -- this table exists so the contract is real even where the
+-- full runtime is not yet.
+CREATE TABLE IF NOT EXISTS clarifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id),
+    question TEXT NOT NULL,
+    answer TEXT,
+    status TEXT NOT NULL DEFAULT 'asked',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    answered_at TEXT
+);
+
+-- ADR-0016: append-only budget ledger. amount_cents is always an integer
+-- (minor units) -- money is never stored as a float in this table.
+CREATE TABLE IF NOT EXISTS budget_ledger_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER REFERENCES tasks(id),
+    event_type TEXT NOT NULL,
+    amount_cents INTEGER NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    detail TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ADR-0015 (Decision 7): Approve creates this, not an Employee directly.
+-- This is an AutomationTask-shaped unit of work (it edits repository
+-- files) -- automation_task_ref is the explicit reference-field linkage
+-- ADR-0015 requires, populated once a real tasks/queue/*.yaml is filed
+-- for it (not automated by this pass -- see architecture/001).
+CREATE TABLE IF NOT EXISTS employee_provisioning_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    proposal_id INTEGER NOT NULL REFERENCES employee_proposals(id),
+    task_id INTEGER NOT NULL REFERENCES tasks(id),
+    status TEXT NOT NULL DEFAULT 'pending',
+    requires_extra_approval INTEGER NOT NULL DEFAULT 0,
+    extra_approval_granted INTEGER NOT NULL DEFAULT 0,
+    automation_task_ref TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT
+);
 """
 
 
@@ -214,6 +277,27 @@ def init_db():
         _ensure_column(conn, "execution_events", "skill_version", "TEXT")
         _ensure_column(conn, "execution_events", "skill_digest", "TEXT")
         _ensure_column(conn, "reports", "skills_used", "TEXT NOT NULL DEFAULT '[]'")
+
+        # Migration for the 2026-07-13 architecture-correction pass (ADR-0014):
+        # a structured, additive terminal-outcome marker -- never replaces
+        # `status`, which keeps its existing string vocabulary unchanged.
+        _ensure_column(conn, "tasks", "terminal_reason", "TEXT")
+        _ensure_column(conn, "reports", "schema_version", "INTEGER NOT NULL DEFAULT 1")
+        _ensure_column(conn, "reports", "terminal_status", "TEXT")
+        _ensure_column(conn, "reports", "terminal_reason", "TEXT")
+
+        # ADR-0016: the current global operating budget (USD 15.00) is a
+        # real, append-only ledger entry -- never a number hardcoded into
+        # enforcement code -- seeded exactly once (gated on "no ledger
+        # events exist yet at all", not on a version-added column, since
+        # this table is new rather than migrated).
+        existing_ledger_events = conn.execute("SELECT COUNT(*) AS n FROM budget_ledger_events").fetchone()["n"]
+        if existing_ledger_events == 0:
+            conn.execute(
+                "INSERT INTO budget_ledger_events (task_id, event_type, amount_cents, currency, detail) "
+                "VALUES (NULL, 'budget_approved', 1500, 'USD', ?)",
+                ("Initial global operating budget per ADR-0016, accepted by Owner 2026-07-13.",),
+            )
 
         conn.commit()
     finally:
@@ -359,10 +443,66 @@ def create_task(request_text, project_id):
         conn.close()
 
 
-def update_task_status(task_id, status):
+class TaskTransitionError(Exception):
+    """Raised by update_task_status for a (current, new) status pair not in
+    _TASK_TRANSITIONS -- the tasks.status analogue of digital_assets'
+    existing transition_asset/_ASSET_TRANSITIONS enforcement (ADR-0014).
+    An invalid transition must be structurally impossible, not just
+    discouraged by caller convention."""
+
+
+# architecture/002_TASK_LIFECYCLE.md's full transition table. A pair not
+# listed here (and not a same-status no-op) is rejected outright.
+_TASK_TRANSITIONS = {
+    ("intake", "waiting_for_clarification"),
+    ("intake", "planning"),
+    ("waiting_for_clarification", "planning"),
+    ("planning", "staffing"),
+    ("staffing", "execution"),
+    ("staffing", "awaiting_approval"),
+    ("awaiting_approval", "gap_approved"),
+    ("awaiting_approval", "gap_rejected"),
+    ("gap_approved", "planning"),  # replanned once the EmployeeProvisioningTask completes
+    ("execution", "qa"),
+    ("qa", "delivered"),
+    ("qa", "revision"),
+    ("qa", "needs_owner_review"),
+    ("revision", "qa"),
+    ("needs_owner_review", "delivered"),
+    ("needs_owner_review", "revision"),
+    ("needs_owner_review", "cancelled"),
+    ("revision", "planning"),  # Owner-authorized restart after needs_owner_review -> revision (see main.py's retry route)
+    # A terminal failure can occur from any non-terminal, in-flight status.
+    ("intake", "failed"),
+    ("waiting_for_clarification", "failed"),
+    ("planning", "failed"),
+    ("staffing", "failed"),
+    ("execution", "failed"),
+    ("qa", "failed"),
+    ("revision", "failed"),
+}
+TASK_TERMINAL_STATUSES = {"delivered", "failed", "cancelled", "needs_owner_review", "gap_rejected"}
+
+
+def update_task_status(task_id, status, terminal_reason=None):
+    """terminal_reason, when given, is a small dict ({"category": ...,
+    "detail": ...}) persisted as JSON alongside the status -- ADR-0014's
+    structured-reason approach, so a new terminal outcome never needs a
+    brand-new tasks.status string. A (current, new) pair not in
+    _TASK_TRANSITIONS (and not a same-status no-op) raises
+    TaskTransitionError before anything is written."""
     conn = get_connection()
     try:
-        conn.execute("UPDATE tasks SET status = ? WHERE id = ?", (status, task_id))
+        row = conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            raise TaskTransitionError(f"task {task_id} does not exist")
+        current = row["status"]
+        if current != status and (current, status) not in _TASK_TRANSITIONS:
+            raise TaskTransitionError(f"invalid ProductTask transition: '{current}' -> '{status}'")
+        conn.execute(
+            "UPDATE tasks SET status = ?, terminal_reason = ? WHERE id = ?",
+            (status, json.dumps(terminal_reason) if terminal_reason else None, task_id),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -415,12 +555,26 @@ def get_task(task_id):
         conn.close()
 
 
-def create_report(task_id, employees_involved, timeline, input_tokens, output_tokens, cost, result_text, qa_note, artifacts=None, employee_versions=None, skills_used=None):
+def create_report(
+    task_id, employees_involved, timeline, input_tokens, output_tokens, cost, result_text, qa_note,
+    artifacts=None, employee_versions=None, skills_used=None, terminal_status=None, terminal_reason=None,
+    schema_version=1,
+):
+    """ADR-0014: Report is the immutable terminal projection for a
+    ProductTask -- schema_version/terminal_status/terminal_reason are
+    additive fields (default NULL/1 for pre-this-pass callers). One report
+    row per task_id is enforced at the DB level (reports.task_id PRIMARY
+    KEY) deliberately -- see tests/test_worker.py's
+    test_create_report_twice_for_same_task_is_rejected_at_db_level -- a
+    ProductTask that later moves from needs_owner_review to delivered
+    updates this same row's terminal_status via update_report_terminal_outcome,
+    it never calls create_report a second time."""
     conn = get_connection()
     try:
         conn.execute(
             "INSERT INTO reports (task_id, employees_involved, timeline, input_tokens, output_tokens, cost, "
-            "result_text, qa_note, artifacts, employee_versions, skills_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "result_text, qa_note, artifacts, employee_versions, skills_used, schema_version, terminal_status, "
+            "terminal_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id,
                 json.dumps(employees_involved),
@@ -433,8 +587,31 @@ def create_report(task_id, employees_involved, timeline, input_tokens, output_to
                 json.dumps(artifacts or []),
                 json.dumps(employee_versions or {}),
                 json.dumps(skills_used or []),
+                schema_version,
+                terminal_status,
+                json.dumps(terminal_reason) if terminal_reason else None,
             ),
         )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_report_terminal_outcome(task_id, terminal_status, terminal_reason=None):
+    """Updates ONLY the terminal disposition of an existing report row (e.g.
+    needs_owner_review -> delivered once the Owner accepts a draft) --
+    never re-inserts, never touches the immutable operational content
+    (result_text/timeline/cost/qa_note). Raises if no report exists yet
+    for this task_id (the Owner cannot accept a draft that was never
+    reported)."""
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "UPDATE reports SET terminal_status = ?, terminal_reason = ? WHERE task_id = ?",
+            (terminal_status, json.dumps(terminal_reason) if terminal_reason else None, task_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError(f"no report exists yet for task {task_id}")
         conn.commit()
     finally:
         conn.close()
@@ -452,6 +629,7 @@ def get_report(task_id):
         report["artifacts"] = json.loads(report["artifacts"])
         report["employee_versions"] = json.loads(report["employee_versions"])
         report["skills_used"] = json.loads(report["skills_used"])
+        report["terminal_reason"] = json.loads(report["terminal_reason"]) if report.get("terminal_reason") else None
         return report
     finally:
         conn.close()
@@ -565,6 +743,198 @@ def get_employees_using_skill(skill_id, version=None):
         return matches
     finally:
         conn.close()
+
+
+_DANGEROUS_PERMISSION_KEYWORDS = ("external", "publish", "payment", "send_", "delete", "deploy", "outreach")
+
+
+def create_employee_provisioning_task(proposal_id, task_id, permissions=None):
+    """ADR-0015 (Decision 7): Approve creates this, never an Employee
+    directly. requires_extra_approval is a simple, disclosed keyword
+    check against the proposed permissions -- not a judgment call hidden
+    from the Owner; the extra confirmation itself is a separate, explicit
+    step (grant_provisioning_extra_approval)."""
+    requires_extra_approval = any(
+        keyword in str(p).lower() for p in (permissions or []) for keyword in _DANGEROUS_PERMISSION_KEYWORDS
+    )
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "INSERT INTO employee_provisioning_tasks (proposal_id, task_id, status, requires_extra_approval) "
+            "VALUES (?, ?, 'pending', ?)",
+            (proposal_id, task_id, int(requires_extra_approval)),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def get_employee_provisioning_task(provisioning_id):
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM employee_provisioning_tasks WHERE id = ?", (provisioning_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def grant_provisioning_extra_approval(provisioning_id):
+    """A dangerous/external-permission provisioning task cannot proceed
+    until this is called explicitly -- separate from the original
+    proposal approval, per Decision 7."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE employee_provisioning_tasks SET extra_approval_granted = 1 WHERE id = ?",
+            (provisioning_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# --- ADR-0016: append-only budget ledger -----------------------------------
+#
+# Money here is always integer cents (USD minor units) -- never float --
+# per ADR-0016's explicit "never binary FLOAT/REAL as the authoritative
+# representation" rule. Existing reports.cost/employee_proposals.cost stay
+# REAL (unchanged, out of this pass's scope); this ledger is a separate,
+# new, exact accounting of RESERVATIONS and ENFORCEMENT, distinct from
+# those historical cost-reporting columns.
+#
+# Balance model (deliberately simple, auditable from the append-only log
+# alone, never a mutable counter):
+#   available = sum(budget_approved + adjustment_approved + reservation_released)
+#             - sum(task_reserved)
+# spend_recorded is informational/audit only -- the reservation already
+# accounted for the conservative maximum; reservation_released trues the
+# balance up to what was actually spent.
+
+class BudgetError(Exception):
+    """Raised when a reservation would exceed the task's own sub-limit or
+    the remaining global balance -- callers must treat this as a real,
+    expected 'not enough budget' condition (ADR-0016: automatic overspend
+    is never permitted), not a bug."""
+
+
+_BUDGET_EVENT_TYPES = {
+    "budget_approved", "task_reserved", "spend_recorded",
+    "reservation_released", "adjustment_approved", "budget_exhausted",
+}
+
+
+def record_budget_event(event_type, amount_cents, task_id=None, currency="USD", detail=None):
+    if event_type not in _BUDGET_EVENT_TYPES:
+        raise ValueError(f"unknown budget ledger event_type: {event_type}")
+    if not isinstance(amount_cents, int):
+        raise TypeError("amount_cents must be an exact integer (minor units), never a float")
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO budget_ledger_events (task_id, event_type, amount_cents, currency, detail) VALUES (?, ?, ?, ?, ?)",
+            (task_id, event_type, amount_cents, currency, detail),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_global_available_cents():
+    conn = get_connection()
+    try:
+        total = 0
+        for row in conn.execute("SELECT event_type, amount_cents FROM budget_ledger_events"):
+            if row["event_type"] in ("budget_approved", "adjustment_approved", "reservation_released"):
+                total += row["amount_cents"]
+            elif row["event_type"] == "task_reserved":
+                total -= row["amount_cents"]
+        return total
+    finally:
+        conn.close()
+
+
+def get_task_net_reserved_cents(task_id):
+    """Outstanding (not-yet-released) reservation for one task."""
+    conn = get_connection()
+    try:
+        total = 0
+        for row in conn.execute(
+            "SELECT event_type, amount_cents FROM budget_ledger_events WHERE task_id = ?", (task_id,),
+        ):
+            if row["event_type"] == "task_reserved":
+                total += row["amount_cents"]
+            elif row["event_type"] == "reservation_released":
+                total -= row["amount_cents"]
+        return total
+    finally:
+        conn.close()
+
+
+def reserve_budget(task_id, amount_cents, task_budget_cents=None, detail=None):
+    """Step 1-4 of ADR-0016's enforcement sequence: check the task's own
+    sub-limit (if one is set) and the global balance, then record a
+    task_reserved event -- all inside one connection/transaction so a
+    concurrent reservation for the same or another task can never
+    observe a half-updated balance (SQLite's own single-writer-at-a-time
+    locking on this file-based DB serializes these transactions).
+    Raises BudgetError (never allows an overspend) if either limit would
+    be exceeded, and records a budget_exhausted event in that case."""
+    if not isinstance(amount_cents, int):
+        raise TypeError("amount_cents must be an exact integer (minor units), never a float")
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if task_budget_cents is not None:
+            reserved_so_far = 0
+            for row in conn.execute(
+                "SELECT event_type, amount_cents FROM budget_ledger_events WHERE task_id = ?", (task_id,),
+            ):
+                if row["event_type"] == "task_reserved":
+                    reserved_so_far += row["amount_cents"]
+                elif row["event_type"] == "reservation_released":
+                    reserved_so_far -= row["amount_cents"]
+            if reserved_so_far + amount_cents > task_budget_cents:
+                conn.execute(
+                    "INSERT INTO budget_ledger_events (task_id, event_type, amount_cents, detail) VALUES (?, 'budget_exhausted', 0, ?)",
+                    (task_id, f"task sub-limit exceeded: {reserved_so_far + amount_cents} > {task_budget_cents} cents"),
+                )
+                conn.commit()
+                raise BudgetError(f"task {task_id}: reservation of {amount_cents} cents would exceed its own task budget")
+
+        available = 0
+        for row in conn.execute("SELECT event_type, amount_cents FROM budget_ledger_events"):
+            if row["event_type"] in ("budget_approved", "adjustment_approved", "reservation_released"):
+                available += row["amount_cents"]
+            elif row["event_type"] == "task_reserved":
+                available -= row["amount_cents"]
+        if amount_cents > available:
+            conn.execute(
+                "INSERT INTO budget_ledger_events (task_id, event_type, amount_cents, detail) VALUES (?, 'budget_exhausted', 0, ?)",
+                (task_id, f"global balance exceeded: requested {amount_cents}, available {available} cents"),
+            )
+            conn.commit()
+            raise BudgetError(f"task {task_id}: reservation of {amount_cents} cents would exceed the remaining global balance ({available} cents)")
+
+        conn.execute(
+            "INSERT INTO budget_ledger_events (task_id, event_type, amount_cents, detail) VALUES (?, 'task_reserved', ?, ?)",
+            (task_id, amount_cents, detail),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def record_spend(task_id, amount_cents, detail=None):
+    record_budget_event("spend_recorded", amount_cents, task_id=task_id, detail=detail)
+
+
+def release_reservation(task_id, amount_cents, detail=None):
+    if amount_cents < 0:
+        raise ValueError("release amount cannot be negative")
+    if amount_cents == 0:
+        return  # nothing to release; a real zero-amount ledger row would be noise, not evidence
+    record_budget_event("reservation_released", amount_cents, task_id=task_id, detail=detail)
 
 
 def get_total_cost():

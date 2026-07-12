@@ -34,7 +34,7 @@ The foundational rule (see `memory/decisions/ADR-0001-digital-company-not-chat.m
 
 Per ADR-0002 and `architecture/005_EMPLOYEE_MODEL.md`: employees have no career growth or RPG-style progression. They are versioned definitions (role, mission, responsibilities, required capabilities, tools, permissions, reporting rules, cost policy) that get updated — new instructions, new models, new tools — rather than "promoted." Old task history must keep referencing the employee version that actually performed the work.
 
-Core employee definitions live in `company/employees/core/*.yaml` (orchestrator, pm, cfo, qa, researcher, writer, designer, coder), indexed in `company/EMPLOYEE_REGISTRY.md`. Each YAML follows a consistent shape: `id, name, title, department, version, mission, responsibilities, required_capabilities, reporting_rules, permissions`. Follow this exact shape when adding or editing an employee definition.
+Core employee definitions live in `company/employees/core/*.yaml` (orchestrator, cfo, qa, researcher, writer, designer, coder), indexed in `company/EMPLOYEE_REGISTRY.md`. Each YAML follows a consistent shape: `id, name, title, department, version, mission, responsibilities, required_capabilities, reporting_rules, permissions`. Follow this exact shape when adding or editing an employee definition. **`pm` (Project Manager) is listed in the Registry as `planned` only — there is no `pm.yaml` and it is not runtime-active** (`ADR-0014`/`architecture/018`); do not add one just to make the file list match the Registry table, only when real Subtask/dependency/multi-Employee coordination exists for it to actually track.
 
 ### Task lifecycle
 

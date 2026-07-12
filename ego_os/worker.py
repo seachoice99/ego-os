@@ -41,6 +41,26 @@ def process_one(task_id: int) -> None:
     store.set_task_run_state(task_id, "running")
     try:
         lifecycle.run(task_id, task["project_id"], task["request_text"])
+    except store.BudgetError as exc:
+        # ADR-0016: automatic overspend is never permitted -- a reservation
+        # that would exceed the task's own sub-limit or the remaining
+        # global balance stops the call before it happens. This is a real,
+        # expected outcome (not a bug), so it still gets ADR-0014's usual
+        # terminal-state + Report treatment, centralized here rather than
+        # at each of lifecycle.py's several model_provider.complete() call
+        # sites -- every one of them raises the same exception type.
+        current = store.get_task(task_id)
+        if current is not None and current["status"] not in store.TASK_TERMINAL_STATUSES:
+            reason = {"category": "budget_exhausted", "detail": str(exc)}
+            store.update_task_status(task_id, "failed", terminal_reason=reason)
+            if store.get_report(task_id) is None:
+                store.create_report(
+                    task_id=task_id, employees_involved=["orchestrator"],
+                    timeline=[{"step": "budget", "employee": "system", "detail": str(exc)}],
+                    input_tokens=0, output_tokens=0, cost=0.0, result_text=None, qa_note=None,
+                    terminal_status="failed", terminal_reason=reason,
+                )
+        store.set_task_run_state(task_id, "failed", error_message=str(exc))
     except Exception as exc:
         store.set_task_run_state(task_id, "failed", error_message=str(exc))
     else:

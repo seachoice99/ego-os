@@ -77,7 +77,7 @@ EXECUTION_CAPABILITY = {
 }
 
 
-def _select_specialist(request_text):
+def _select_specialist(request_text, task_id=None):
     """Orchestrator genuinely chooses between more than one specialist by
     required capability, instead of a fixed rule. Returns
     (specialist_id_or_None, gap_reason_or_None, in_tok, out_tok, cost) --
@@ -99,7 +99,7 @@ def _select_specialist(request_text):
         "If none of them have the right capability for this request, reply with exactly:\n"
         "NO_MATCH: <one short sentence on what capability is missing>"
     )
-    decision_text, in_tok, out_tok, cost = model_provider.complete("delegation", prompt)
+    decision_text, in_tok, out_tok, cost = model_provider.complete("delegation", prompt, task_id=task_id)
     decision = decision_text.strip()
     if decision.upper().startswith("NO_MATCH"):
         gap_reason = decision.split(":", 1)[1].strip() if ":" in decision else "no matching capability"
@@ -117,7 +117,7 @@ _PROPOSAL_FIELDS = (
 )
 
 
-def _draft_employee_proposal(request_text, gap_reason):
+def _draft_employee_proposal(request_text, gap_reason, task_id=None):
     """Capability Gap Handling (v0.3): instead of silently defaulting to an
     existing specialist that doesn't really fit, draft an Employee Creation
     Proposal matching tasks/templates/EMPLOYEE_CREATION.md's shape, for the
@@ -135,7 +135,7 @@ def _draft_employee_proposal(request_text, gap_reason):
         '"reason": "why existing employees are not enough"}\n\n'
         "Reply with ONLY that JSON object, nothing else."
     )
-    text, in_tok, out_tok, cost = model_provider.complete("delegation", prompt)
+    text, in_tok, out_tok, cost = model_provider.complete("delegation", prompt, task_id=task_id)
     brace = text.find("{")
     fields = {}
     if brace != -1:
@@ -208,7 +208,7 @@ def _run_specialist(specialist_id, title, mission, request_text, memory_context,
         f"{_tool_prompt_block(permissions)}"
     )
 
-    text, in_tok, out_tok, cost = model_provider.complete(capability, prompt)
+    text, in_tok, out_tok, cost = model_provider.complete(capability, prompt, task_id=task_id)
     tool_events = []
     artifacts = []
 
@@ -232,7 +232,7 @@ def _run_specialist(specialist_id, title, mission, request_text, memory_context,
             f"You requested: {match.group(0)}\nTool result:\n{tool_result_text}\n\n"
             "Now produce the final artifact for the Owner using this result. Do not request another tool."
         )
-        text, in_tok2, out_tok2, cost2 = model_provider.complete(capability, followup_prompt)
+        text, in_tok2, out_tok2, cost2 = model_provider.complete(capability, followup_prompt, task_id=task_id)
         in_tok += in_tok2
         out_tok += out_tok2
         cost += cost2
@@ -282,14 +282,27 @@ def _execute_tool_request(text, match, permissions, task_id):
         return f"Tool error: {exc}", event_info, None
 
 
-def _run_qa(request_text, draft_text):
+def _run_qa(request_text, draft_text, task_id=None):
     qa_prompt = (
         "You are the QA Reviewer at a digital company.\n\n"
         f"{_today_line()}"
         f"Original request:\n{request_text}\n\nDraft:\n{draft_text}\n\n"
         "Reply with PASS if the draft satisfies the request, or REVISE: <reason> if not."
     )
-    return model_provider.complete("critique", qa_prompt)
+    return model_provider.complete("critique", qa_prompt, task_id=task_id)
+
+
+def _classify_qa_verdict(qa_note):
+    """ADR-0014: a verdict is 'pass', 'revise', or -- anything else --
+    'malformed'. Malformed is never silently treated as either of the
+    other two; it fails closed to needs_owner_review exactly like a
+    second REVISE does."""
+    upper = (qa_note or "").strip().upper()
+    if upper.startswith("PASS"):
+        return "pass"
+    if upper.startswith("REVISE"):
+        return "revise"
+    return "malformed"
 
 
 def run(task_id: int, project_id: int, request_text: str):
@@ -333,7 +346,7 @@ def run(task_id: int, project_id: int, request_text: str):
     # Staffing
     store.update_task_status(task_id, "staffing")
     staffing_start = time.perf_counter()
-    specialist_id, gap_reason, s_in, s_out, s_cost = _select_specialist(request_text)
+    specialist_id, gap_reason, s_in, s_out, s_cost = _select_specialist(request_text, task_id=task_id)
     staffing_duration_ms = _elapsed_ms(staffing_start)
     total_in += s_in
     total_out += s_out
@@ -355,7 +368,7 @@ def run(task_id: int, project_id: int, request_text: str):
             duration_ms=staffing_duration_ms,
         )
         proposal_start = time.perf_counter()
-        fields, p_in, p_out, p_cost = _draft_employee_proposal(request_text, gap_reason)
+        fields, p_in, p_out, p_cost = _draft_employee_proposal(request_text, gap_reason, task_id=task_id)
         proposal_duration_ms = _elapsed_ms(proposal_start)
         total_in += p_in
         total_out += p_out
@@ -414,6 +427,22 @@ def run(task_id: int, project_id: int, request_text: str):
             skill_version=employee_skill_refs[0].get("version"),
             detail=f"Task #{task_id}, employee '{specialist_id}': {exc}",
         )
+        # ADR-0014: every terminal ProductTask state gets a Report -- a
+        # Skill-resolution failure previously left the task stuck at
+        # status="staffing" with no report at all. still re-raised so
+        # worker.process_one's own run_state="failed" bookkeeping is
+        # unaffected -- this only ensures the ProductTask's own lifecycle
+        # status and Report are correct before that happens.
+        timeline.append({"step": "skill_resolution", "employee": specialist_id, "detail": f"Skill resolution failed: {exc}"})
+        store.update_task_status(
+            task_id, "failed", terminal_reason={"category": "tool_failure", "detail": f"Skill resolution failed: {exc}"},
+        )
+        store.create_report(
+            task_id=task_id, employees_involved=["orchestrator", specialist_id],
+            timeline=timeline, input_tokens=total_in, output_tokens=total_out, cost=total_cost,
+            result_text=None, qa_note=None, employee_versions={"orchestrator": orchestrator_version, specialist_id: roster["version"]},
+            terminal_status="failed", terminal_reason={"category": "tool_failure", "detail": f"Skill resolution failed: {exc}"},
+        )
         store.set_employee_status("orchestrator", "idle")
         raise
     primary_skill = resolved_skills[0] if resolved_skills else None
@@ -452,25 +481,44 @@ def run(task_id: int, project_id: int, request_text: str):
             status=event.get("status"), detail=event["detail"],
         )
 
-    # QA
+    # QA (ADR-0014: QA is a real gate -- see architecture/002_TASK_LIFECYCLE.md's
+    # transition table. PASS delivers; REVISE gets exactly one automatic
+    # retry; a second REVISE or any malformed verdict (either call) fails
+    # closed to needs_owner_review, never silently delivered.)
     store.update_task_status(task_id, "qa")
     store.set_employee_status("qa", "assigned")
     qa_start = time.perf_counter()
-    qa_note, q_in, q_out, q_cost = _run_qa(request_text, draft_text)
+    qa_note, q_in, q_out, q_cost = _run_qa(request_text, draft_text, task_id=task_id)
     qa_duration_ms = _elapsed_ms(qa_start)
     total_in += q_in
     total_out += q_out
     total_cost += q_cost
+    first_verdict = _classify_qa_verdict(qa_note)
     timeline.append({"step": "qa", "employee": "qa", "detail": qa_note})
     store.log_execution_event(
         task_id, step="qa", employee_id="qa", employee_version=qa_version,
         capability="critique", model=model_provider.model_for_capability("critique"),
-        input_tokens=q_in, output_tokens=q_out, cost=q_cost,
-        status="pass" if qa_note.strip().upper().startswith("PASS") else "revise",
+        input_tokens=q_in, output_tokens=q_out, cost=q_cost, status=first_verdict,
         detail=qa_note, duration_ms=qa_duration_ms,
     )
 
-    if qa_note.strip().upper().startswith("REVISE"):
+    if first_verdict == "malformed":
+        store.set_employee_status(specialist_id, "idle")
+        store.set_employee_status("qa", "idle")
+        reason = {"category": "qa_failed", "detail": f"Malformed QA verdict on first review: {qa_note!r}"}
+        timeline.append({"step": "needs_owner_review", "employee": "qa", "detail": reason["detail"]})
+        store.update_task_status(task_id, "needs_owner_review", terminal_reason=reason)
+        store.set_employee_status("orchestrator", "idle")
+        store.create_report(
+            task_id=task_id, employees_involved=["orchestrator", specialist_id, "qa"], timeline=timeline,
+            input_tokens=total_in, output_tokens=total_out, cost=total_cost, result_text=draft_text,
+            qa_note=qa_note, artifacts=artifacts, employee_versions=employee_versions, skills_used=skills_used,
+            terminal_status="needs_owner_review", terminal_reason=reason,
+        )
+        return
+
+    if first_verdict == "revise":
+        store.update_task_status(task_id, "revision")
         revision_start = time.perf_counter()
         draft_text, r_in, r_out, r_cost, r_tool_events, r_artifacts = _run_specialist(
             specialist_id, roster["title"], roster["mission"], request_text, memory_context,
@@ -502,20 +550,40 @@ def run(task_id: int, project_id: int, request_text: str):
         if r_artifacts:
             artifacts = r_artifacts
 
+        store.update_task_status(task_id, "qa")
         qa2_start = time.perf_counter()
-        qa_note, q2_in, q2_out, q2_cost = _run_qa(request_text, draft_text)
+        qa_note, q2_in, q2_out, q2_cost = _run_qa(request_text, draft_text, task_id=task_id)
         qa2_duration_ms = _elapsed_ms(qa2_start)
         total_in += q2_in
         total_out += q2_out
         total_cost += q2_cost
+        second_verdict = _classify_qa_verdict(qa_note)
         timeline.append({"step": "qa", "employee": "qa", "detail": qa_note})
         store.log_execution_event(
             task_id, step="qa", employee_id="qa", employee_version=qa_version,
             capability="critique", model=model_provider.model_for_capability("critique"),
-            input_tokens=q2_in, output_tokens=q2_out, cost=q2_cost,
-            status="pass" if qa_note.strip().upper().startswith("PASS") else "revise",
+            input_tokens=q2_in, output_tokens=q2_out, cost=q2_cost, status=second_verdict,
             detail=qa_note, duration_ms=qa2_duration_ms,
         )
+
+        if second_verdict != "pass":
+            store.set_employee_status(specialist_id, "idle")
+            store.set_employee_status("qa", "idle")
+            detail = (
+                f"Malformed QA verdict on second review: {qa_note!r}" if second_verdict == "malformed"
+                else f"QA still requested a revision on the second review: {qa_note}"
+            )
+            reason = {"category": "qa_failed", "detail": detail}
+            timeline.append({"step": "needs_owner_review", "employee": "qa", "detail": detail})
+            store.update_task_status(task_id, "needs_owner_review", terminal_reason=reason)
+            store.set_employee_status("orchestrator", "idle")
+            store.create_report(
+                task_id=task_id, employees_involved=["orchestrator", specialist_id, "qa"], timeline=timeline,
+                input_tokens=total_in, output_tokens=total_out, cost=total_cost, result_text=draft_text,
+                qa_note=qa_note, artifacts=artifacts, employee_versions=employee_versions, skills_used=skills_used,
+                terminal_status="needs_owner_review", terminal_reason=reason,
+            )
+            return
 
     store.set_employee_status(specialist_id, "idle")
     store.set_employee_status("qa", "idle")
@@ -541,6 +609,8 @@ def run(task_id: int, project_id: int, request_text: str):
         artifacts=artifacts,
         employee_versions=employee_versions,
         skills_used=skills_used,
+        terminal_status="delivered",
+        terminal_reason=None,
     )
 
     # Memory Update

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted by Owner on 2026-07-10 for implementation planning. It defines a provider-neutral intermediate representation, not a runtime implementation.
+Accepted by Owner on 2026-07-10. The composition contract itself is implemented for SR-01–04's shipped scope (`ADR-0017`, 2026-07-13) via `ego_os/lifecycle.py`'s Skill resolution/prompt-injection path (`_resolve_employee_skills`/`_skill_instructions_block`) — a single Claude-only adapter today, not yet a multi-provider adapter layer; the provider-neutral representation this document describes remains the target for any future second provider adapter.
 
 ## Design rule
 
