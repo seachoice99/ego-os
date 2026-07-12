@@ -1,6 +1,6 @@
 {
   "id": "TOKEN-EFFICIENCY-VERIFY",
-  "status": "waiting_for_limit",
+  "status": "claimed",
   "priority": "P0",
   "title": "Real-runner verification of TOKEN-EFFICIENCY-001's staged execution machinery",
   "prompt": "This is a small, safe documentation-only task whose purpose is to prove TOKEN-EFFICIENCY-001 (see CHANGELOG.md's entry and automation/README.md's 'TOKEN-EFFICIENCY-001: staged execution' section) actually works against a real Claude Code session, not just the fake-executable test suite.\n\nDo exactly this:\n1. Create automation/TOKEN_EFFICIENCY_VERIFICATION.md documenting, in a few short paragraphs: what TOKEN-EFFICIENCY-001 changed (staged execution, handoff protocol, waiting_for_limit, killProcessTree) and why (measured real usage: RUNNER-002 used 46 turns/3.1M cache-read tokens, DA-02 used 86 turns/9.3M cache-read tokens, DA-03 burned 55 turns/4.2M cache-read tokens without finishing -- cite these real numbers, don't invent new ones). Include the literal marker 'TOKEN_EFFICIENCY_VERIFIED' somewhere in the file.\n2. Read the file back from disk and confirm the marker is present before doing anything else.\n3. Touch no other file besides this one and this task's own YAML (tasks/queue/TOKEN-EFFICIENCY-VERIFY.yaml). Do not touch ego_os/, tests/, architecture/, memory/decisions/, company/, automation/claude_task_runner.js, automation/session_manager.js, automation/release_sync.js, automation/README.md, or any test file.\n4. Run the existing test suites (both `node --test` from the repo root, and the Python `pytest` suite) and confirm both still pass -- this task changes no code, so this is a sanity check, not a requirement to add new tests.\n5. Commit the implementation (message starting 'TOKEN-EFFICIENCY-VERIFY:'), push to origin/main. This task's release is no_deploy -- do not deploy, do not touch production.\n6. Record status 'done' in this task file's result object with a summary and the commit hash, then make a SEPARATE final metadata commit (also prefixed 'TOKEN-EFFICIENCY-VERIFY:') containing only this task's own YAML update, and push it too.\n7. Before finishing, verify and be prepared to report: local HEAD == origin/main HEAD, working tree clean.",
@@ -89,6 +89,12 @@
     "rate_limit": {
       "source": "text_pattern",
       "matched": "usage limit reached"
+    },
+    "pre_claim_status": "waiting_for_limit",
+    "agent_lease": {
+      "agent_id": "77379baa-6f06-48ec-80ab-83279f7d09df",
+      "claimed_at": "2026-07-12T15:51:47.403Z",
+      "expires_at": "2026-07-12T16:21:47.403Z"
     }
   },
   "started_at": "2026-07-11T12:30:34.618Z"
