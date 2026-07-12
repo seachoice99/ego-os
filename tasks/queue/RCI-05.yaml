@@ -1,0 +1,27 @@
+{
+  "id": "RCI-05",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Runner Integration: elevation-of-privilege regression tests",
+  "prompt": "Add a dedicated test module that codifies the ONE hard boundary ADR-0009/architecture/015 exist to enforce: production Ego OS must never gain a path to the control server's state-changing routes. Implement: (1) a static test that scans ego_os/ source files for any HTTP client call targeting port 4756 combined with method POST/PUT/DELETE -- fails the build if found anywhere outside an explicitly allow-listed, documented exception (there should be none); (2) a runtime test that calls /ops/runner with a mocked/patched outbound-request tracker and asserts zero outbound requests were made during a normal read. Also confirm (read-only check, not a new test) that RCI-02's fail-closed executor rule and RCI-03/04's Owner-auth requirement are both still passing as part of this task's full-suite run -- this task is a capstone regression guard, not new functionality.",
+  "acceptance": [
+    "The static POST-to-control-server scan test exists, passes today, and would fail if such a call were ever added -- verified by temporarily adding one in a throwaway branch during this task's own development and confirming the test catches it, then removing it before commit",
+    "The runtime zero-outbound-request test for /ops/runner passes",
+    "Full existing pytest suite (150+) and full node --test suite both pass",
+    "This task's own result.summary explicitly confirms RCI-02 and RCI-03/04's tests were re-run and still pass"
+  ],
+  "allowed_paths": [
+    "tests/test_ops_runner_security.py"
+  ],
+  "forbidden_paths": [
+    "ego_os/main.py",
+    "ego_os/templates/",
+    "automation/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["RCI-02", "RCI-03", "RCI-04"],
+  "estimated_minutes": 60,
+  "result": null
+}

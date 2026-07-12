@@ -1,0 +1,29 @@
+{
+  "id": "CCTV-03",
+  "status": "blocked",
+  "priority": "P3",
+  "title": "Chip-Chip TV: Outreach Campaigns and Messages, mandatory suppression at draft time",
+  "prompt": "Extend ego_os/cctv_store.py with cctv_outreach_campaigns and cctv_messages tables per the domain model. Implement create_message_draft(campaign_id, contact_id, subject, body) that FIRST checks the contact's and its organization's do_not_contact flags (CCTV-02) and refuses to create ANY row (not a suppressed-status row -- no row at all) if either is true, returning a clear refusal reason. Implement the status transition functions (draft -> pending_owner_approval -> approved -> sent|failed) enforcing that 'sent' is unreachable without a prior 'approved' state carrying approved_by and approved_at populated by the caller. No SMTP code in this task -- 'sent' is just a status transition function here, exercised only by a test calling it directly, not by any real send.",
+  "acceptance": [
+    "cctv_outreach_campaigns and cctv_messages tables created additively",
+    "create_message_draft() refuses to create a row for a do_not_contact contact or org -- proven by a test asserting ZERO rows exist afterward, not a suppressed-status row",
+    "A test proves the status machine rejects a direct draft->sent transition and a sent transition without approved_by/approved_at populated",
+    "Full existing pytest suite still passes"
+  ],
+  "allowed_paths": [
+    "ego_os/cctv_store.py",
+    "tests/test_cctv_store.py"
+  ],
+  "forbidden_paths": [
+    "ego_os/store.py",
+    "ego_os/main.py",
+    "automation/",
+    "memory/decisions/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["CCTV-02"],
+  "estimated_minutes": 90,
+  "result": null
+}

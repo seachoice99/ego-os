@@ -1,0 +1,32 @@
+{
+  "id": "RCI-03",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Runner Integration: local, read-only Operations route in Ego OS",
+  "prompt": "Per ADR-0009 and architecture/015_RUNNER_OPERATIONS_INTEGRATION.md, add a new Owner-authenticated, read-only route group to ego_os (e.g. GET /ops/runner) that reads the runner's local state (runner_state.json, events.ndjson tail, tasks/queue/*.yaml summaries) from disk paths configured via environment variables (documented, defaulting to the standard %LOCALAPPDATA%\\EgoOS\\claude-runner\\ locations on the SAME machine) and renders a status summary using the existing Jinja2/template conventions. The route's own module MUST include a docstring stating plainly: this is local-machine-only and will show 'runner not available' when Ego OS is running on the production VPS, since the runner's state files simply do not exist there. This route performs ZERO outbound HTTP requests to the control server or anywhere else -- disk reads only, or if genuinely needed, GET-only calls to 127.0.0.1 explicitly documented as such. No POST capability anywhere in this route group, now or as a stub for later.",
+  "acceptance": [
+    "GET /ops/runner requires Owner Basic Auth (401 without it), matching every other Ego OS route",
+    "When runner_state.json does not exist (the normal case on the production VPS, and in the test environment), the route renders a clear 'runner not available locally' state -- never a 500, never fabricated data",
+    "When a real runner_state.json/tasks/queue exist (simulated via a temp fixture in tests), the route renders their actual content",
+    "grep across ego_os/ for '4756' or any control-server POST call returns nothing -- verified as part of this task's own test",
+    "Full existing pytest suite (147+) still passes"
+  ],
+  "allowed_paths": [
+    "ego_os/main.py",
+    "ego_os/templates/ops_runner.html",
+    "tests/test_ops_runner.py"
+  ],
+  "forbidden_paths": [
+    "ego_os/auth.py",
+    "ego_os/lifecycle.py",
+    "ego_os/tools.py",
+    "ego_os/model_provider.py",
+    "automation/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["RCI-01", "RCI-02"],
+  "estimated_minutes": 90,
+  "result": null
+}

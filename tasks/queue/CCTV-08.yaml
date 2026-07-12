@@ -1,0 +1,31 @@
+{
+  "id": "CCTV-08",
+  "status": "blocked",
+  "priority": "P3",
+  "title": "Chip-Chip TV: read-only historical import into a TEMPORARY database only",
+  "prompt": "Per ADR-0011 point 4, implement a CLI tool (ego_os/cctv_import.py) that reads a source file path (CSV/XLSX, supplied via a command-line argument or env var -- never hardcoded to any real path in committed code) and loads it READ-ONLY into a NEW, throwaway SQLite file (e.g. a path under a temp directory, never ego_os/cctv.db) using CCTV-01's audit mapping as the column-mapping reference. The tool prints a validation report (row count, mapping coverage, rows that didn't map cleanly) and EXITS without writing anything to ego_os/cctv.db -- promotion into the real Chip-Chip TV tables is explicitly a distinct, later, separately Owner-reviewed task, not implemented here. Tests use a small fixture CSV with fictional data, never a real source file.",
+  "acceptance": [
+    "ego_os/cctv_import.py reads a source file into a temp SQLite DB only, never touching ego_os/cctv.db",
+    "The tool prints a validation report (counts, mapping coverage, unmapped rows) without silently dropping anything",
+    "A test using a fixture CSV proves the temp-DB-only behavior and the validation report's content",
+    "No real Chip-Chip TV source file path is hardcoded anywhere in this task's committed code",
+    "Full existing pytest suite still passes"
+  ],
+  "allowed_paths": [
+    "ego_os/cctv_import.py",
+    "tests/test_cctv_import.py"
+  ],
+  "forbidden_paths": [
+    "ego_os/cctv_store.py",
+    "ego_os/store.py",
+    "ego_os/main.py",
+    "automation/",
+    "memory/decisions/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["CCTV-01", "CCTV-02"],
+  "estimated_minutes": 75,
+  "result": null
+}

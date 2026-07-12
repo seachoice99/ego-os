@@ -1,0 +1,33 @@
+{
+  "id": "ERE-05",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Evidence Research Engine: Collection Run tool with hard boundary enforcement",
+  "prompt": "Implement the Collection stage as an ego_os/tools.py tool (following the existing Tool Framework pattern already used for create_document/create_spreadsheet), gated on a new required capability distinct from any existing employee permission. The tool must REFUSE, with a clear logged reason (never a silent no-op, never a partial success): any request whose target requires solving a CAPTCHA or bypassing bot protection (detect via known challenge-page markers and refuse before making further requests); any request requiring authenticated/paywalled access unless the task's own owner_approved risk explicitly grants a named credential for that exact source; any request whose target is a personal profile / private-contact-aggregation pattern (name+personal-social-URL+private-contact fields together) unless owner_approved. Every collection attempt -- successful or refused -- writes a CollectionRun row (ERE-01) with errors populated on refusal, and a research_event (ERE-03). This is the highest-risk task in this epic: owner_approved must be true for the 'external_infrastructure' risk before this task's status may ever become 'ready'.",
+  "acceptance": [
+    "A new tool function performs Collection only against public, non-authenticated, non-CAPTCHA-protected sources by default",
+    "Three specific refusal tests exist and pass: a CAPTCHA-page-shaped response is refused with a logged reason, an authenticated-content request without a matching owner-granted credential is refused, and a personal-data-shaped target pattern is refused without owner_approved",
+    "Every collection attempt (success or refusal) produces exactly one CollectionRun row and one research_event -- no attempt is unlogged",
+    "No test in this task's suite makes a real external network call -- all network interaction is mocked, matching this repo's existing test-suite discipline (tests/conftest.py's own pattern)",
+    "Full existing pytest suite still passes"
+  ],
+  "allowed_paths": [
+    "ego_os/tools.py",
+    "tests/test_evidence_research.py"
+  ],
+  "forbidden_paths": [
+    "ego_os/main.py",
+    "ego_os/lifecycle.py",
+    "ego_os/model_provider.py",
+    "skills/",
+    "architecture/",
+    "memory/decisions/",
+    "automation/"
+  ],
+  "risks": ["external_infrastructure"],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["ERE-01", "ERE-03"],
+  "estimated_minutes": 90,
+  "result": null
+}

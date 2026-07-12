@@ -1,0 +1,32 @@
+{
+  "id": "CCTV-07",
+  "status": "blocked",
+  "priority": "P3",
+  "title": "Chip-Chip TV: end-to-end vertical slice, reusing the Evidence Research Engine",
+  "prompt": "Using entirely FICTIONAL fixture data (invented organization/contact names clearly marked as test fixtures, never real Chip-Chip TV data), drive a full integration test: create a fixture Organization+Contact (not suppressed) -> use Epic 1's Evidence Research Engine (architecture/014, ego_os/evidence_research.py + store.py functions from ERE-01..03) with a Chip-Chip-TV-shaped ResearchGoal/DatasetSchema fixture to produce a small Fact set about the fixture organization -- this is the proof that Epic 1's Engine is genuinely domain-agnostic (ADR-0008's own acceptance criterion), not a restatement -> create an Opportunity -> a Campaign -> a Message draft (proving suppression logic still passes it through since this contact is not suppressed) -> approve it -> SmtpAdapter.send() with MockTransport -> ReplyIngestionAdapter.poll() with a mock reply matched back to the sent message. Also include one negative-path fixture proving a suppressed contact never gets a draft in the first place, end to end. If ERE-01..06 are not yet implemented when this task runs, it must fail closed with a clear blocked reason naming the missing dependency, not stub around it.",
+  "acceptance": [
+    "A single integration test drives fixture data through: Evidence Research Engine fact creation -> Opportunity -> Campaign -> Message draft -> approval -> mock send -> mock reply ingestion -> matched Reply",
+    "A second test proves a suppressed contact never gets a Message row anywhere in this flow",
+    "All data used is clearly fixture/fictional -- no real Chip-Chip TV organization or contact name appears in this task's committed test file",
+    "If Epic 1's Engine functions are missing, this task fails closed with a clear message rather than faking the integration",
+    "Full existing pytest suite still passes"
+  ],
+  "allowed_paths": [
+    "tests/test_cctv_integration.py"
+  ],
+  "forbidden_paths": [
+    "ego_os/cctv_store.py",
+    "ego_os/cctv_smtp_adapter.py",
+    "ego_os/cctv_reply_adapter.py",
+    "ego_os/store.py",
+    "ego_os/evidence_research.py",
+    "automation/",
+    "memory/decisions/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["CCTV-02", "CCTV-03", "CCTV-04", "CCTV-05", "CCTV-06", "ERE-01", "ERE-02", "ERE-03"],
+  "estimated_minutes": 90,
+  "result": null
+}

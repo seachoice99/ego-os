@@ -1,0 +1,31 @@
+{
+  "id": "RCI-02",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Runner Integration: fail-closed executor validation",
+  "prompt": "In automation/claude_task_runner.js's execute() (or a small new pure helper in automation/session_manager.js, matching the existing pure-logic-plus-thin-shell pattern), add validation of the optional task.executor field: absent or 'claude' or 'auto' proceeds exactly as today; any other value (including 'codex', since no Codex executor exists yet) causes execute() to refuse the task immediately -- status 'failed', a clear result.runner_error naming the unimplemented executor, no session spawned at all. This mirrors the existing fail-closed pattern from the RUNNER-CONTROL-UI auth defect (never silently proceed on an unimplemented capability). Add unit tests (pure logic) and one integration test proving execute() refuses a task with executor:'codex' without ever spawning the fake Claude process.",
+  "acceptance": [
+    "A task with no executor field, executor:'claude', or executor:'auto' behaves identically to today -- zero regression, proven by re-running the full existing node test suite",
+    "A task with executor:'codex' (or any other unrecognized value) is refused before any process is spawned -- status 'failed', result.runner_error names the field and value",
+    "A new pure unit test and a new integration test (using the existing fake_claude.cmd fixture, asserting it was never invoked for the rejected task) both pass",
+    "Full existing node --test suite still passes"
+  ],
+  "allowed_paths": [
+    "automation/claude_task_runner.js",
+    "automation/session_manager.js",
+    "automation/claude_task_runner.test.js",
+    "automation/session_manager.test.js"
+  ],
+  "forbidden_paths": [
+    "automation/runner_control.js",
+    "automation/control_server.js",
+    "automation/web/",
+    "ego_os/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["RCI-01"],
+  "estimated_minutes": 60,
+  "result": null
+}

@@ -1,0 +1,28 @@
+{
+  "id": "UOP-03",
+  "status": "blocked",
+  "priority": "P3",
+  "title": "Usage Optimization: real baseline report from the actual queue history",
+  "prompt": "Run UOP-01's exporter (node automation/usage_metrics.js) against the real tasks/queue/ directory and write automation/USAGE_BASELINE.md documenting the actual, real numbers for every task that has ever run (RUNNER-001, RUNNER-002, SR-01..04, DA-01..05, TOKEN-EFFICIENCY-VERIFY) -- cite the exporter's real output, do not estimate or round suspiciously. Extend architecture/016_USAGE_OPTIMIZATION_POLICY.md's baseline table with this fuller dataset. This is a documentation task using UOP-01's tool as-is -- no new code.",
+  "acceptance": [
+    "automation/USAGE_BASELINE.md exists, citing real output from running automation/usage_metrics.js against the actual repository (not fabricated numbers)",
+    "architecture/016_USAGE_OPTIMIZATION_POLICY.md's baseline table is extended with the additional real tasks",
+    "TOKEN-EFFICIENCY-VERIFY's three real rate-limit encounters are called out explicitly as evidence the fail-closed/waiting_for_limit design works under real, repeated pressure -- not smoothed over",
+    "No code file is touched by this task"
+  ],
+  "allowed_paths": [
+    "automation/USAGE_BASELINE.md",
+    "architecture/016_USAGE_OPTIMIZATION_POLICY.md"
+  ],
+  "forbidden_paths": [
+    "automation/usage_metrics.js",
+    "automation/claude_task_runner.js",
+    "ego_os/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["UOP-01"],
+  "estimated_minutes": 45,
+  "result": null
+}

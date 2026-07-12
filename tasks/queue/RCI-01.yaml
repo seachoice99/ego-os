@@ -1,0 +1,29 @@
+{
+  "id": "RCI-01",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Runner Integration: document new optional task-model fields",
+  "prompt": "Extend tasks/templates/AUTONOMOUS_TASK.yaml and tasks/queue/README.md to document four new OPTIONAL task fields per architecture/015_RUNNER_OPERATIONS_INTEGRATION.md: executor (claude|codex|auto, default 'claude' when absent), preferred_model, fallback_executor, context_budget. Note explicitly that per-stage wall-clock timing continues to use the EXISTING max_duration_minutes field (TOKEN-EFFICIENCY-001) -- this integration does not add a second, confusingly similar timing field. This is a documentation-only task -- no runtime code changes.",
+  "acceptance": [
+    "tasks/templates/AUTONOMOUS_TASK.yaml's own comments (or a sibling doc) list all four new optional fields with their exact meaning and default when absent",
+    "tasks/queue/README.md documents that old task YAMLs work unchanged without any of these fields, matching the established pattern from TOKEN-EFFICIENCY-001's own README section",
+    "The doc explicitly states max_duration_minutes (already shipped) remains the only per-stage timing field -- no new timing field is introduced",
+    "No code file is touched by this task"
+  ],
+  "allowed_paths": [
+    "tasks/templates/AUTONOMOUS_TASK.yaml",
+    "tasks/queue/README.md"
+  ],
+  "forbidden_paths": [
+    "ego_os/",
+    "automation/",
+    "memory/decisions/",
+    "architecture/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": [],
+  "estimated_minutes": 30,
+  "result": null
+}

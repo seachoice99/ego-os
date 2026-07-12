@@ -1,0 +1,28 @@
+{
+  "id": "RCI-04",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Runner Integration: honest usage display and deep link to the local dashboard",
+  "prompt": "Extend RCI-03's /ops/runner template with: (1) an honest 'usage' section that shows result.sessions[].prompt_approx_tokens-derived totals when present, and a clearly labeled 'usage data not available' state otherwise -- never a fabricated or estimated-as-if-real number; (2) a plain <a href=\"http://127.0.0.1:4756\"> deep link to the local control-server dashboard for anyone who needs to actually issue a command, with visible text explaining that state-changing actions happen there, not in Ego OS. No JavaScript fetch to port 4756 is added by this task -- the link is a normal server-rendered anchor tag, nothing more.",
+  "acceptance": [
+    "The usage section never displays a number without a data source it can point to -- covered by a test asserting the 'not available' state renders when result.sessions is absent or empty",
+    "The deep link to http://127.0.0.1:4756 is present and is a plain <a> tag, not fetched or proxied by the Ego OS backend",
+    "Full existing pytest suite still passes"
+  ],
+  "allowed_paths": [
+    "ego_os/templates/ops_runner.html",
+    "ego_os/main.py",
+    "tests/test_ops_runner.py"
+  ],
+  "forbidden_paths": [
+    "ego_os/auth.py",
+    "ego_os/lifecycle.py",
+    "automation/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["RCI-03"],
+  "estimated_minutes": 45,
+  "result": null
+}

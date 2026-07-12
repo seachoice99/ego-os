@@ -1,0 +1,30 @@
+{
+  "id": "UOP-02",
+  "status": "blocked",
+  "priority": "P3",
+  "title": "Usage Optimization: real defect-rate tracking",
+  "prompt": "Add an optional result.retries_after_apparent_done integer field to the task schema (architecture/016's definition): incremented by claude_task_runner.js whenever a task whose status is already 'done' is re-selected and re-run (this should not normally happen via nextTask()'s own filters, but can occur via an explicit human retry action from RUNNER-CONTROL-UI's /api/tasks/:id/retry -- wire the increment there, in control_server.js's handleTaskAction, not in the runner engine itself, since retry is a control-server-issued action). Update automation/usage_metrics.js (UOP-01) to surface this real field instead of the placeholder 0.",
+  "acceptance": [
+    "POST /api/tasks/:id/retry on a task whose status was 'done' (an edge case allowed by taskActionAllowed today -- confirm this and, if taskActionAllowed does not currently permit retrying a done task, that is intentionally out of scope: this task only wires the counter for the retry paths that ARE already allowed, i.e. failed/waiting_for_auth/interrupted) increments retries_after_apparent_done -- if no currently-allowed retry path can produce this scenario, the task's result must say so honestly rather than force an artificial code path",
+    "usage_metrics.js reports the real field",
+    "Full existing node --test suite still passes"
+  ],
+  "allowed_paths": [
+    "automation/control_server.js",
+    "automation/control_server.test.js",
+    "automation/usage_metrics.js",
+    "automation/usage_metrics.test.js"
+  ],
+  "forbidden_paths": [
+    "automation/claude_task_runner.js",
+    "automation/session_manager.js",
+    "automation/runner_control.js",
+    "ego_os/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["UOP-01"],
+  "estimated_minutes": 45,
+  "result": null
+}

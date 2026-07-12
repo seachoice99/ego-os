@@ -1,0 +1,28 @@
+{
+  "id": "CCTV-04",
+  "status": "blocked",
+  "priority": "P3",
+  "title": "Chip-Chip TV: Opportunities, Negotiations, Agreements, Revenue schema",
+  "prompt": "Extend ego_os/cctv_store.py with cctv_opportunities, cctv_negotiations, cctv_agreements, cctv_revenue tables per the domain model, plus CRUD-shaped functions and stage/status transition validation (e.g. an Opportunity's stage only moves forward through identified->contacted->engaged->negotiating->won|lost, never skips or silently reverses without an explicit reason recorded). No UI, no routes -- store-layer only, matching CCTV-02/03's scope.",
+  "acceptance": [
+    "Four tables created additively; CRUD functions exist with tests",
+    "A test proves an invalid stage skip/reversal on an Opportunity is rejected, not silently applied",
+    "Full existing pytest suite still passes"
+  ],
+  "allowed_paths": [
+    "ego_os/cctv_store.py",
+    "tests/test_cctv_store.py"
+  ],
+  "forbidden_paths": [
+    "ego_os/store.py",
+    "ego_os/main.py",
+    "automation/",
+    "memory/decisions/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["CCTV-02"],
+  "estimated_minutes": 75,
+  "result": null
+}

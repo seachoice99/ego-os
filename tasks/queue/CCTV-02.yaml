@@ -1,0 +1,32 @@
+{
+  "id": "CCTV-02",
+  "status": "blocked",
+  "priority": "P3",
+  "title": "Chip-Chip TV: Rights/Content Catalog, Organizations, Contacts schema (isolated DB)",
+  "prompt": "Implement a NEW, isolated module ego_os/cctv_store.py with its own SQLite connection to ego_os/cctv.db (a SEPARATE file from ego_os/ego_os.db -- already covered by the existing .gitignore glob 'ego_os/*.db', confirm this and do not add a redundant gitignore entry unless the glob genuinely misses it). Create additive tables per projects/chip-chip-tv-licensing/DOMAIN_MODEL.md: cctv_rights_catalog, cctv_content_catalog, cctv_organizations, cctv_contacts. Enforce at the write-function level: a cctv_contacts row's do_not_contact can be set true independently but can NEVER be set false if its organization's do_not_contact is true (org-level suppression always wins). Reference CCTV-01's AUDIT_FINDINGS.md mapping proposal when naming/typing fields, adjusting DOMAIN_MODEL.md's draft shape only where the real audit findings require a genuine correction (document any such correction in this task's own result, do not silently diverge from the domain model doc without noting why).",
+  "acceptance": [
+    "ego_os/cctv_store.py exists, uses its own SQLite file (ego_os/cctv.db), never opens or writes to ego_os/ego_os.db",
+    "Four tables created additively; CRUD-shaped functions exist for each with tests",
+    "A test proves org-level do_not_contact=true cannot be overridden to false at the contact level, while contact-level suppression independent of the org still works",
+    "ego_os/cctv.db does not appear in git status after this task's own test run (confirming the existing gitignore glob already covers it)",
+    "Full existing pytest suite still passes"
+  ],
+  "allowed_paths": [
+    "ego_os/cctv_store.py",
+    "tests/test_cctv_store.py",
+    "projects/chip-chip-tv-licensing/DOMAIN_MODEL.md"
+  ],
+  "forbidden_paths": [
+    "ego_os/store.py",
+    "ego_os/main.py",
+    "ego_os/tools.py",
+    "automation/",
+    "memory/decisions/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["CCTV-01"],
+  "estimated_minutes": 90,
+  "result": null
+}

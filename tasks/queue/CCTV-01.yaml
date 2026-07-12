@@ -1,0 +1,31 @@
+{
+  "id": "CCTV-01",
+  "status": "blocked",
+  "priority": "P3",
+  "title": "Chip-Chip TV: audit existing local tables/documents (read-only, no upload)",
+  "prompt": "STRICT SCOPE: locate existing local spreadsheets/documents related to Chip-Chip TV (Цып-Цып ТВ) licensing on this machine (ask the Owner for the specific location(s) if not already obvious from context -- do not guess and scan the whole filesystem). READ ONLY: open and inspect them, change nothing, do not move/rename/copy them anywhere, and do not upload or transmit their content anywhere outside this local review. Produce projects/chip-chip-tv-licensing/AUDIT_FINDINGS.md describing: file inventory (name, format, approximate row/record count, last-modified date -- no content dump), column/field inventory per file, apparent duplicate or conflicting records ACROSS files (described structurally, e.g. 'File A and File B both have an organization contact list with ~40% name overlap and inconsistent country fields' -- never a literal dump of the overlapping real names/emails into this committed doc), data quality notes (missing fields, inconsistent formats, stale entries), and a concrete mapping proposal from each source file's columns onto projects/chip-chip-tv-licensing/DOMAIN_MODEL.md's tables -- flag any column with no clear home rather than silently dropping it. If NO existing local Chip-Chip TV files can be found, the findings doc must say so explicitly and this task ends there -- do not fabricate findings.",
+  "acceptance": [
+    "projects/chip-chip-tv-licensing/AUDIT_FINDINGS.md exists and contains a real file inventory (or an explicit 'no files found' statement) -- not a placeholder",
+    "No real contact names, emails, phone numbers, negotiation terms, or revenue figures appear anywhere in the committed findings doc -- only structural/statistical descriptions",
+    "No source file was modified, moved, renamed, or copied -- verified by the task's own final check against original file timestamps/checksums where feasible",
+    "No content was transmitted to any external destination -- this task makes no outbound network calls",
+    "A concrete column-to-domain-model mapping proposal exists, with unmapped columns explicitly flagged"
+  ],
+  "allowed_paths": [
+    "projects/chip-chip-tv-licensing/AUDIT_FINDINGS.md"
+  ],
+  "forbidden_paths": [
+    "ego_os/",
+    "automation/",
+    "architecture/",
+    "memory/decisions/",
+    "projects/chip-chip-tv-licensing/DOMAIN_MODEL.md",
+    "projects/chip-chip-tv-licensing/OUTREACH_ADAPTER_DESIGN.md"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": [],
+  "estimated_minutes": 90,
+  "result": null
+}

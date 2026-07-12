@@ -1,0 +1,35 @@
+{
+  "id": "CCTV-06",
+  "status": "blocked",
+  "priority": "P3",
+  "title": "Chip-Chip TV: ReplyIngestionAdapter behind a mock transport, unsubscribe wiring",
+  "prompt": "Per projects/chip-chip-tv-licensing/OUTREACH_ADAPTER_DESIGN.md's Reply ingestion section, implement ego_os/cctv_reply_adapter.py as the ONLY module permitted to import imaplib for Chip-Chip TV purposes (same static-grep-test pattern as CCTV-05). Implement exactly ONE transport: a MockTransport that returns a pre-seeded list of fake incoming messages for tests. poll() creates cctv_replies rows, attempting to match in_reply_to_message_id (never dropping an unmatched reply). A reply classified_intent=='unsubscribe' (classification logic: simple, documented keyword/pattern matching -- no model call in this task) automatically sets do_not_contact=true on the replying contact -- the ONE write this adapter is allowed to make to cctv_contacts without separate Owner review, per the design doc's explicit reasoning. No other classified_intent writes to cctv_contacts/cctv_organizations. Read IMAP config from CCTV_IMAP_HOST/PORT/USER/PASSWORD env vars; report 'not configured' if unset, same as CCTV-05.",
+  "acceptance": [
+    "ego_os/cctv_reply_adapter.py exists, contains the only imaplib import in the repository outside its own test -- proven by a static grep test",
+    "poll() with the mock transport creates cctv_replies rows and matches in_reply_to_message_id where possible; an unmatched reply is still recorded, not dropped",
+    "An unsubscribe-classified reply sets do_not_contact=true on the contact -- proven by a test; no other intent writes to cctv_contacts/cctv_organizations",
+    "With CCTV_IMAP_* env vars unset, the adapter reports 'not configured' rather than attempting a connection",
+    "No test opens a real network socket",
+    "Full existing pytest suite still passes"
+  ],
+  "allowed_paths": [
+    "ego_os/cctv_reply_adapter.py",
+    "tests/test_cctv_reply_adapter.py"
+  ],
+  "forbidden_paths": [
+    "ego_os/cctv_store.py",
+    "ego_os/cctv_smtp_adapter.py",
+    "ego_os/store.py",
+    "ego_os/main.py",
+    "automation/",
+    "memory/decisions/",
+    ".env",
+    ".env.example"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["CCTV-03"],
+  "estimated_minutes": 60,
+  "result": null
+}

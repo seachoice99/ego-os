@@ -1,0 +1,31 @@
+{
+  "id": "ERE-03",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Evidence Research Engine: append-only audit events for every write",
+  "prompt": "Extend ego_os/store.py (built on ERE-01's tables) with an append-only research_events table and log_research_event(...), matching digital_asset_events' precedent exactly (DA-01/architecture/013): every create/merge/dedup-resolution/status-change on a research_goals, datasets, facts, or duplicate_clusters row logs an event with actor (system|model|owner), action, entity_type, entity_id, timestamp, and a reason field. Wire this logging into every write function ERE-01 already created -- no write path is allowed to bypass event logging, matching the 'no function deletes or silently mutates history' rule already established for Digital Assets. This task does NOT implement any new business logic beyond audit logging on existing write paths.",
+  "acceptance": [
+    "research_events table created additively; log_research_event() implemented",
+    "Every existing ERE-01 write function now logs a corresponding event -- verified by a test that creates a goal/dataset/fact/cluster and asserts the expected event exists with correct actor/action/entity fields",
+    "No existing write function's return shape or external behavior changes -- only that it now also logs an event; ERE-01/ERE-02's existing tests still pass unmodified",
+    "Full existing pytest suite still passes"
+  ],
+  "allowed_paths": [
+    "ego_os/store.py",
+    "tests/test_evidence_research.py"
+  ],
+  "forbidden_paths": [
+    "ego_os/main.py",
+    "ego_os/tools.py",
+    "skills/",
+    "architecture/",
+    "memory/decisions/",
+    "automation/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["ERE-01"],
+  "estimated_minutes": 60,
+  "result": null
+}

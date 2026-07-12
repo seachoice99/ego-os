@@ -1,0 +1,33 @@
+{
+  "id": "ERE-01",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Evidence Research Engine: additive domain model migration",
+  "prompt": "Implement ADR-0008 and architecture/014_EVIDENCE_RESEARCH_ENGINE.md's domain model as new, additive SQLite tables in ego_os/store.py, following the exact pattern DA-01 already used for digital_assets/digital_asset_events (CREATE TABLE IF NOT EXISTS; no existing table's schema changed). Create: research_goals, dataset_schemas, datasets, sources, facts, duplicate_clusters, collection_runs, normalization_passes, deduplication_passes -- exact fields per architecture/014's domain model section. Add store.py functions to create/read each entity, with facts write path validating: confidence is either a documented scale value (1.0/0.75/0.5/0.25) or null with status='unknown' and a required limitations note; a fact can never be written with unknown provenance (source_id required unless status='unknown'). No pipeline logic, no tool wiring, no network access in this task -- pure schema plus CRUD-shaped store functions and their tests. Do not register a Skill manifest yet (that is ERE-04). Do not touch digital_assets, skills, or any existing table.",
+  "acceptance": [
+    "New tables created via additive CREATE TABLE IF NOT EXISTS blocks only -- no ALTER, no DROP, no change to any pre-existing table",
+    "store.py functions exist for creating and reading each of the 9 new entities, with the confidence/limitations/provenance validation rules enforced (invalid combinations raise a clear error, not a silent write)",
+    "New tests in tests/test_evidence_research.py cover: valid fact creation, rejection of a fact with confidence set but no source_id, rejection of a fact with status!='unknown' and no confidence, acceptance of status='unknown' with a limitations reason and no confidence",
+    "Full existing pytest suite still passes (147+ tests) -- no regression to digital assets, skills, tasks, or any other existing feature"
+  ],
+  "allowed_paths": [
+    "ego_os/store.py",
+    "tests/test_evidence_research.py"
+  ],
+  "forbidden_paths": [
+    "ego_os/main.py",
+    "ego_os/lifecycle.py",
+    "ego_os/tools.py",
+    "ego_os/model_provider.py",
+    "skills/",
+    "architecture/",
+    "memory/decisions/",
+    "automation/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": [],
+  "estimated_minutes": 75,
+  "result": null
+}

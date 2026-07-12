@@ -1,0 +1,30 @@
+{
+  "id": "UOP-01",
+  "status": "blocked",
+  "priority": "P3",
+  "title": "Usage Optimization: metrics exporter across the real task queue",
+  "prompt": "Implement a pure, deterministic function (new module automation/usage_metrics.js, no network, no side effects beyond reading tasks/queue/*.yaml) that reads every task file's result.sessions[] and produces one comparable row per task: task id, total sessions, total prompt_approx_tokens, total duration_ms, final outcome (done|failed|blocked|waiting_for_limit|waiting_for_auth|interrupted), and a defect_rate placeholder (0 until UOP-02 adds the real field). Output as both JSON and a simple CSV string. This is read-only tooling -- it must never write to any task file.",
+  "acceptance": [
+    "automation/usage_metrics.js exports a pure function taking a list of loaded tasks and returning the comparable rows described above",
+    "A CLI entrypoint (node automation/usage_metrics.js) prints the report for the real tasks/queue/ when run, read-only",
+    "Unit tests cover: a task with multiple sessions sums correctly, a task with result:null (never run) is reported with zeros not a crash, a task with a missing/malformed sessions array is skipped with a warning (matching listTasks()'s existing skip-and-warn precedent) not a crash",
+    "Full existing node --test suite still passes"
+  ],
+  "allowed_paths": [
+    "automation/usage_metrics.js",
+    "automation/usage_metrics.test.js"
+  ],
+  "forbidden_paths": [
+    "automation/claude_task_runner.js",
+    "automation/session_manager.js",
+    "automation/runner_control.js",
+    "automation/control_server.js",
+    "ego_os/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": [],
+  "estimated_minutes": 60,
+  "result": null
+}

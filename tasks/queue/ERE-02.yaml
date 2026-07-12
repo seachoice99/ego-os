@@ -1,0 +1,32 @@
+{
+  "id": "ERE-02",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Evidence Research Engine: deterministic normalization and deduplication",
+  "prompt": "Implement pure, deterministic normalization and deduplication functions for the Evidence Research Engine (architecture/014). Location: a new ego_os/evidence_research.py module (pure functions, no DB access, no network -- store.py wiring is a later task). normalize_record(raw, schema) applies field-mapping/cleanup rules (whitespace, casing, known-format parsing e.g. dates/URLs) given a DatasetSchema's field definitions. cluster_duplicates(records, threshold) performs fuzzy-match clustering (e.g. normalized-string similarity) against an EXPLICIT, documented threshold constant -- returns clusters plus an 'ambiguous' subset that did not clear the threshold cleanly enough for automatic resolution (these are the only cases a later task may escalate to a model call; this task implements no model calls at all). Every rule and threshold must be documented in the module's own comments with the reasoning, matching this codebase's established practice of citing real measured/reasoned justification rather than arbitrary constants.",
+  "acceptance": [
+    "ego_os/evidence_research.py contains normalize_record() and cluster_duplicates(), both pure functions with no I/O",
+    "The similarity threshold is a named, documented constant, not a magic number inline",
+    "tests/test_evidence_research.py (extended, same file as ERE-01) covers: normalization of messy whitespace/casing/date-format input to the schema's canonical form, clustering of near-duplicate records, correct separation of clean-cluster vs ambiguous results, and at least one adversarial case (two genuinely distinct entities that are lexically similar) that must NOT be merged",
+    "Full existing pytest suite still passes"
+  ],
+  "allowed_paths": [
+    "ego_os/evidence_research.py",
+    "tests/test_evidence_research.py"
+  ],
+  "forbidden_paths": [
+    "ego_os/store.py",
+    "ego_os/main.py",
+    "ego_os/tools.py",
+    "skills/",
+    "architecture/",
+    "memory/decisions/",
+    "automation/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["ERE-01"],
+  "estimated_minutes": 75,
+  "result": null
+}

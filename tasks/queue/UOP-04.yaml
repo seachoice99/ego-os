@@ -1,0 +1,26 @@
+{
+  "id": "UOP-04",
+  "status": "blocked",
+  "priority": "P3",
+  "title": "Usage Optimization: extend MODEL_SELECTION_POLICY.md with the disclosed routing table",
+  "prompt": "Cross-link models/MODEL_SELECTION_POLICY.md and architecture/016_USAGE_OPTIMIZATION_POLICY.md's capability-based routing decision table (mechanical work / ordinary features / architecture-and-review tiers) so both documents agree and neither silently duplicates or contradicts the other. Add a short section to MODEL_SELECTION_POLICY.md explicitly stating this routing is guidance for a task author setting preferred_model (architecture/015's field), never an automatic classifier -- matching this codebase's established non-goal. Documentation only.",
+  "acceptance": [
+    "models/MODEL_SELECTION_POLICY.md references architecture/016's routing table rather than restating a possibly-conflicting version",
+    "The 'guidance, not automatic' non-goal is stated explicitly in at least one of the two documents",
+    "No code file is touched by this task"
+  ],
+  "allowed_paths": [
+    "models/MODEL_SELECTION_POLICY.md",
+    "architecture/016_USAGE_OPTIMIZATION_POLICY.md"
+  ],
+  "forbidden_paths": [
+    "automation/",
+    "ego_os/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": [],
+  "estimated_minutes": 30,
+  "result": null
+}

@@ -1,0 +1,30 @@
+{
+  "id": "ERE-04",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Evidence Research Engine: register the Skill manifest (quarantined, not approved)",
+  "prompt": "Per architecture/011_SKILL_MANIFEST_SPECIFICATION.md and skills/README.md's existing registry layout, create skills/registry/evidence_research_engine/0.1.0/manifest.yaml (exact shape from architecture/014's 'Skill manifest' section) plus a SKILL.md entrypoint document describing, in operational terms (what to do, not hidden reasoning), how the Engine plans a research goal, designs a schema, and sequences the five pipeline stages -- referencing ERE-01/02/03's real store.py/evidence_research.py functions by name so the Skill's instructions are grounded in what actually exists, not aspirational. Set trust.state: quarantined and lifecycle.state: active in the manifest -- do NOT set trust.state: approved; per ADR-0005, a new Skill enters the trust lifecycle at discovered/quarantined and requires a distinct, later Owner review action to reach approved. This task does not implement Collection tooling (ERE-05) or the end-to-end pipeline wiring (ERE-06).",
+  "acceptance": [
+    "skills/registry/evidence_research_engine/0.1.0/manifest.yaml exists, validates against architecture/011's required manifest shape, with trust.state exactly 'quarantined'",
+    "SKILL.md exists alongside it and accurately describes only functions that exist in the codebase as of ERE-01/02/03 (no reference to unimplemented Collection tooling as if it already works)",
+    "No trust.state anywhere in this task's output is 'approved' -- a test or manual check confirms this",
+    "Full existing pytest and node test suites still pass (this task should not need to touch either, but the check is still run)"
+  ],
+  "allowed_paths": [
+    "skills/registry/evidence_research_engine/"
+  ],
+  "forbidden_paths": [
+    "ego_os/",
+    "automation/",
+    "architecture/",
+    "memory/decisions/",
+    "skills/registry/structured_reporting/",
+    "skills/README.md"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["ERE-01", "ERE-02", "ERE-03"],
+  "estimated_minutes": 45,
+  "result": null
+}

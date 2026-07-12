@@ -1,0 +1,33 @@
+{
+  "id": "CCTV-05",
+  "status": "blocked",
+  "priority": "P3",
+  "title": "Chip-Chip TV: SmtpAdapter behind a mock transport only",
+  "prompt": "Per projects/chip-chip-tv-licensing/OUTREACH_ADAPTER_DESIGN.md's Send path section, implement ego_os/cctv_smtp_adapter.py as the ONLY module in this codebase permitted to import smtplib for Chip-Chip TV purposes. SmtpAdapter.send(message) re-checks message.status=='approved' and re-checks do_not_contact on the contact/org (a third, independent gate beyond CCTV-03's draft-time check) immediately before attempting to send, refusing otherwise. Implement exactly ONE transport in this task: a MockTransport that records 'would have sent' calls for test assertions and never opens a real socket. Read SMTP config (host/port/user/password) from environment variables named CCTV_SMTP_HOST/PORT/USER/PASSWORD -- if unset, the adapter must clearly report 'not configured', never silently proceed with empty credentials. Add a static test that greps the repository for any OTHER file importing smtplib and fails if one is found outside this module and its own test file.",
+  "acceptance": [
+    "ego_os/cctv_smtp_adapter.py exists, contains the only smtplib import in the repository outside its own test -- proven by the static grep test",
+    "SmtpAdapter.send() refuses a non-'approved' message and refuses a suppressed contact/org, both proven by tests",
+    "With CCTV_SMTP_* env vars unset, the adapter reports 'not configured' rather than attempting a connection -- proven by a test",
+    "No test in this task's suite opens a real network socket",
+    "Full existing pytest suite still passes"
+  ],
+  "allowed_paths": [
+    "ego_os/cctv_smtp_adapter.py",
+    "tests/test_cctv_smtp_adapter.py"
+  ],
+  "forbidden_paths": [
+    "ego_os/cctv_store.py",
+    "ego_os/store.py",
+    "ego_os/main.py",
+    "automation/",
+    "memory/decisions/",
+    ".env",
+    ".env.example"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["CCTV-03"],
+  "estimated_minutes": 60,
+  "result": null
+}

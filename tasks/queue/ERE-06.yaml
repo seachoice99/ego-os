@@ -1,0 +1,34 @@
+{
+  "id": "ERE-06",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Evidence Research Engine: end-to-end vertical slice against a fixture goal",
+  "prompt": "Prove the full pipeline works end to end using a hand-authored, fictional fixture ResearchGoal and DatasetSchema (e.g. 'which of these three fictional example companies published a public sustainability report in the last year' against 3-5 fabricated fixture sources embedded in the test itself) -- NOT a real target, and no real network calls anywhere in this task's tests. Wire: Collection (ERE-05's tool, called against fixture data / a mocked fetch) -> Normalization -> Deduplication (ERE-02) -> Fact writes with full provenance (ERE-01/03) -> a trivial AnalyticsView (e.g. count of facts by confidence tier). Confirm the resulting Dataset is versioned, every Fact has complete provenance, and the full research_events audit trail reconstructs the run. This is integration proof, not new business logic -- if a real gap is found in ERE-01..05 during this task, fix it minimally in the already-owned file, not by expanding this task's own scope.",
+  "acceptance": [
+    "A single integration test drives the fixture goal through all five pipeline stages and asserts a real, versioned Dataset with provenance-complete Facts exists at the end",
+    "The research_events audit trail for that run can be read back and shows a coherent sequence (collection -> normalization -> dedup -> fact writes) matching what happened",
+    "At least one fixture case exercises the 'unknown stays unknown' rule (a fixture source deliberately lacks an answer for one entity/field, and the resulting Fact is status='unknown' with a reason, never guessed)",
+    "No real network call anywhere in this task's test suite",
+    "Full existing pytest suite still passes"
+  ],
+  "allowed_paths": [
+    "tests/test_evidence_research_integration.py",
+    "ego_os/store.py",
+    "ego_os/evidence_research.py",
+    "ego_os/tools.py"
+  ],
+  "forbidden_paths": [
+    "ego_os/main.py",
+    "ego_os/model_provider.py",
+    "skills/",
+    "architecture/",
+    "memory/decisions/",
+    "automation/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["ERE-01", "ERE-02", "ERE-03", "ERE-04", "ERE-05"],
+  "estimated_minutes": 90,
+  "result": null
+}
