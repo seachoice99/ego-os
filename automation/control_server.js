@@ -63,9 +63,11 @@ function getOrCreateAgentToken() {
   fs.mkdirSync(path.dirname(AGENT_TOKEN_FILE), { recursive: true });
   const token = crypto.randomBytes(32).toString("hex");
   fs.writeFileSync(AGENT_TOKEN_FILE, token, { mode: 0o600 });
-  // Shown exactly once, at the moment of creation, for the Owner to copy
-  // into the agent's own credential store -- never logged again after this.
-  console.log(`Generated new Windows agent token (copy this now, it will not be shown again): ${token}`);
+  // Never log the full token -- it would land in journalctl/syslog and
+  // count as disclosed. Only the last 4 characters are logged, purely so
+  // an operator can confirm which rotation is active; the real value is
+  // read directly from AGENT_TOKEN_FILE (mode 0600) by whoever needs it.
+  console.log(`Generated new Windows agent token, ends in ...${token.slice(-4)}. Full value: ${AGENT_TOKEN_FILE} (not logged).`);
   return token;
 }
 

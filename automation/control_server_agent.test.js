@@ -355,3 +355,35 @@ test("no API response ever echoes the raw agent token back", async () => {
   assert.doesNotMatch(text, new RegExp(env.token));
   teardown(env);
 });
+
+test("generating a new agent token never logs the full value -- only the last 4 characters", async () => {
+  const localDir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-agent-tokenlog-"));
+  process.env.EGO_OS_AGENT_TOKEN_FILE = path.join(localDir, "agent_token");
+  delete require.cache[require.resolve("./control_server.js")];
+  delete require.cache[require.resolve("./claude_task_runner.js")];
+  delete require.cache[require.resolve("./runner_control.js")];
+  const controlServer = require("./control_server.js");
+
+  const originalLog = console.log;
+  const logged = [];
+  console.log = (...args) => { logged.push(args.join(" ")); };
+  let token;
+  try {
+    token = controlServer.getOrCreateAgentToken();
+  } finally {
+    console.log = originalLog;
+  }
+
+  const combinedLog = logged.join("\n");
+  assert.doesNotMatch(
+    combinedLog,
+    new RegExp(token),
+    "the full agent token must never be written to console/log output"
+  );
+  assert.match(
+    combinedLog,
+    new RegExp(token.slice(-4).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    "a short, non-identifying suffix should still be logged so an operator can confirm rotation happened"
+  );
+  fs.rmSync(localDir, { recursive: true, force: true });
+});
