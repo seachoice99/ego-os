@@ -1,5 +1,7 @@
 "use strict";
 
+const { resolveGroup } = require("./project_groups.js");
+
 /**
  * Pure decision logic for RUNNER-CONTROL-UI -- no I/O, no child_process, no
  * network, so every rule here is directly unit-testable against synthetic
@@ -237,9 +239,14 @@ function validateReorder(order, tasksById) {
 // in this codebase, but keeping the response shape explicit and narrow is
 // still the safer default for anything served over the control API.
 function summarizeTask(task) {
+  const group = resolveGroup(task.id);
   return {
     id: task.id,
     title: task.title,
+    display_summary: task.display_summary || task.title,
+    group_key: group.key,
+    group_name: group.name,
+    group_casual_summary: group.casual_summary,
     priority: task.priority,
     status: task.status,
     release: task.release,

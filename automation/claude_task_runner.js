@@ -26,6 +26,9 @@ const {
   buildEvent,
   isLeaseExpired,
 } = require("./runner_control.js");
+const { extractSessionUsage, emptyTracker, recordSession } = require("./usage_tracker.js");
+const { listProcessParents, killProcessTree } = require("./process_tree.js");
+const { fetchCodexUsageSnapshot, formatConsoleReport, unknownSnapshot: unknownCodexSnapshot } = require("./codex_usage.js");
 
 // Overridable so tests can run preflight()'s real (but read-only) git
 // checks against an isolated throwaway repo instead of depending on this
@@ -46,6 +49,15 @@ const CONTROL_DIR = path.join(LOCAL, "EgoOS", "claude-runner", "control");
 const COMMANDS_FILE = path.join(CONTROL_DIR, "commands.json");
 const RUNNER_STATE_FILE = path.join(CONTROL_DIR, "runner_state.json");
 const EVENTS_FILE = path.join(CONTROL_DIR, "events.ndjson");
+// Casual dashboard's limits tracker (see automation/usage_tracker.js for
+// why this is parsed from the session's own free, already-emitted final
+// stream-json "result" line rather than any separate command/API call).
+const USAGE_FILE = path.join(CONTROL_DIR, "usage_tracker.json");
+// Codex (ChatGPT) rate-limit snapshots -- one JSONL line per finished
+// Codex session, deliberately OUTSIDE the git-tracked repo, exactly like
+// LOG_DIR/HANDOFF_DIR (see automation/codex_usage.js). Never read/written
+// by the final-sync protocol or any git command.
+const CODEX_USAGE_LOG_FILE = path.join(LOCAL, "EgoOS", "claude-runner", "codex-usage.jsonl");
 // Overridable so tests can point the runner at a fake/mock executable
 // instead of ever spawning a real Claude Code process. The Windows default
 // names an absolute path because npm's global bin location is predictable
@@ -60,81 +72,6 @@ const OWNER_ONLY = new Set(["destructive_data", "irreversible_migration", "payme
 
 function run(file, args, timeout = 60000, opts = {}) {
   return cp.spawnSync(file, args, { cwd: ROOT, encoding: "utf8", timeout, windowsHide: true, ...opts });
-}
-
-// `taskkill /F /T /PID X` is a documented-unreliable heuristic on
-// Windows for anything beyond a shallow tree -- proven live by this
-// module's own tests: it reliably killed the direct child (cmd.exe) but
-// left a grandchild several process-layers deep (cmd.exe -> claude.cmd ->
-// claude.exe, or in tests cmd.exe -> node -> node) still running. Walk
-// the real process tree ourselves (via WMI's Win32_Process on Windows, via
-// `ps -eo pid,ppid` on Linux/macOS -- same ParentProcessId-based algorithm
-// either way) and kill every descendant explicitly, rather than trusting
-// a single-pass heuristic to cascade correctly.
-//
-// This platform split was found necessary live, not designed up front:
-// the very first real Claude Code CLI hang on a Linux VPS revealed that
-// this function previously ran `powershell`/`taskkill` unconditionally --
-// neither exists on Linux, spawnSync just failed silently (ENOENT is not
-// checked on that call), so the process list came back empty, nothing was
-// ever killed, and the timeout's own setTimeout firing correctly did
-// nothing to actually stop the hung process -- runClaude()'s promise
-// never resolved because 'close' never fired on a still-alive child.
-function listProcessParents() {
-  if (process.platform === "win32") {
-    const query = cp.spawnSync("powershell", [
-      "-NoProfile", "-Command",
-      "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress",
-    ], { encoding: "utf8", windowsHide: true });
-    try {
-      const parsed = JSON.parse(query.stdout || "[]");
-      const list = Array.isArray(parsed) ? parsed : [parsed];
-      return list.map((p) => ({ pid: p.ProcessId, ppid: p.ParentProcessId }));
-    } catch {
-      return [];
-    }
-  }
-  const query = cp.spawnSync("ps", ["-eo", "pid,ppid"], { encoding: "utf8" });
-  if (query.status !== 0 || !query.stdout) return [];
-  return query.stdout
-    .split("\n")
-    .slice(1) // header row
-    .map((line) => line.trim().split(/\s+/).map(Number))
-    .filter(([pid, ppid]) => Number.isFinite(pid) && Number.isFinite(ppid))
-    .map(([pid, ppid]) => ({ pid, ppid }));
-}
-
-function killProcessTree(pid) {
-  if (!pid) return;
-  const processes = listProcessParents();
-  const byParent = new Map();
-  for (const p of processes) {
-    if (p.ppid == null) continue;
-    const list = byParent.get(p.ppid) || [];
-    list.push(p.pid);
-    byParent.set(p.ppid, list);
-  }
-  const toKill = [];
-  const stack = [Number(pid)];
-  const seen = new Set();
-  while (stack.length) {
-    const current = stack.pop();
-    if (seen.has(current)) continue;
-    seen.add(current);
-    toKill.push(current);
-    for (const child of byParent.get(current) || []) stack.push(child);
-  }
-  for (const targetPid of toKill) {
-    if (process.platform === "win32") {
-      cp.spawnSync("taskkill", ["/F", "/PID", String(targetPid)], { windowsHide: true });
-    } else {
-      try {
-        process.kill(targetPid, "SIGKILL");
-      } catch {
-        /* already gone -- not an error */
-      }
-    }
-  }
 }
 
 // Windows cannot execute a .cmd file directly via spawnSync -- without
@@ -251,6 +188,73 @@ function clearPendingCommand() {
 function appendEvent(event) {
   fs.mkdirSync(CONTROL_DIR, { recursive: true });
   fs.appendFileSync(EVENTS_FILE, JSON.stringify(event) + "\n", "utf8");
+}
+
+// Thin I/O shell around usage_tracker.js's pure functions -- same split as
+// runner_control.js (pure) / this file (owns the actual file path and
+// fs calls). Never throws on a missing/corrupt file: a fresh, empty
+// tracker is a safe, honest starting point, not a fatal error.
+function readUsageTracker() {
+  try {
+    return JSON.parse(fs.readFileSync(USAGE_FILE, "utf8"));
+  } catch {
+    return emptyTracker();
+  }
+}
+
+function writeUsageTracker(state) {
+  fs.mkdirSync(CONTROL_DIR, { recursive: true });
+  fs.writeFileSync(USAGE_FILE, JSON.stringify(state, null, 2), "utf8");
+}
+
+// Most recent Codex rate-limit snapshot, for the dashboard's "Лимиты"
+// panel -- reads the last line of codex-usage.jsonl (append-only, one
+// entry per finished Codex session). Never throws: a missing/empty/
+// corrupt log is a normal "no data yet" state, not an error.
+function readLatestCodexUsageSnapshot() {
+  try {
+    const lines = fs.readFileSync(CODEX_USAGE_LOG_FILE, "utf8").trim().split("\n").filter(Boolean);
+    if (!lines.length) return null;
+    return JSON.parse(lines[lines.length - 1]);
+  } catch {
+    return null;
+  }
+}
+
+// Called once per finished session (successful or not -- cost/turns were
+// spent either way), never per dashboard poll and never via a separate
+// "/usage"-style command. executor defaults to "claude" until MED-02 (real
+// Codex path) lets a task carry a real, implemented `executor` value.
+function recordSessionUsage(task, rawOutput) {
+  const usage = extractSessionUsage(rawOutput);
+  const next = recordSession(readUsageTracker(), task.executor || "claude", task.id, usage);
+  writeUsageTracker(next);
+}
+
+// Codex (ChatGPT) rate-limit snapshot -- see automation/codex_usage.js for
+// the protocol/rationale. Fires only for a session that actually ran
+// through Codex; `executor` is never guessed here (see resolvedExecutor in
+// execute(), below, for why it is unconditionally "claude" today -- MED-02
+// has not shipped a real Codex dispatch path yet, so this is correctly
+// inert until it does). A failed/unreadable snapshot is logged with
+// status "unknown" and never rethrown -- it must never change the task's
+// own outcome (already saved to disk before this is ever called) or stop
+// the queue.
+async function snapshotCodexUsageIfNeeded(task, executor) {
+  if (executor !== "codex") return;
+  let snapshot;
+  try {
+    snapshot = await fetchCodexUsageSnapshot({});
+  } catch (error) {
+    snapshot = unknownCodexSnapshot(`unexpected error calling codex app-server: ${error.message}`);
+  }
+  console.log(formatConsoleReport(task.id, snapshot));
+  try {
+    fs.mkdirSync(path.dirname(CODEX_USAGE_LOG_FILE), { recursive: true });
+    fs.appendFileSync(CODEX_USAGE_LOG_FILE, JSON.stringify({ task_id: task.id, task_status: task.status, ...snapshot }) + "\n", "utf8");
+  } catch (logError) {
+    console.error(`WARNING: could not append to codex-usage.jsonl: ${logError.message}`);
+  }
 }
 
 function writeRunnerState(state, extra = {}) {
@@ -501,6 +505,14 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
     : (Number(task.max_auto_stages) || DEFAULT_MAX_AUTO_STAGES);
   const stageDurationMinutes = Number(task.max_duration_minutes) || cliTimeoutMinutes;
   const model = task.model || null;
+  // No real per-executor dispatch exists yet (MED-02 is still `blocked`) --
+  // every session today actually runs via the Claude binary regardless of
+  // what task.executor says, so this names that reality explicitly instead
+  // of reading task.executor and pretending a Codex session already ran.
+  // EGO_OS_RUNNER_FORCE_EXECUTOR exists solely so tests can exercise the
+  // Codex-usage-snapshot path today without waiting on MED-02; production
+  // never sets it.
+  const resolvedExecutor = process.env.EGO_OS_RUNNER_FORCE_EXECUTOR || "claude";
 
   const existingSessions = (task.result && Array.isArray(task.result.sessions)) ? task.result.sessions.slice() : [];
   const sessions = existingSessions;
@@ -567,6 +579,7 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
     });
     const durationMs = Date.now() - stageStart;
     fs.writeFileSync(logFile, (output.stdout || "") + (output.stderr || ""), "utf8");
+    recordSessionUsage(task, output.stdout);
 
     if (output.interrupted) {
       // Emergency stop is the ONE command allowed to act mid-session. Per
@@ -590,6 +603,7 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
       if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s interrupted state: ${commitResult.reason}`);
       transition("emergency_stop_command", { reason: "emergency stop during a running stage", taskId: task.id });
       console.error(`INTERRUPTED ${task.id} -- emergency stop requested mid-session; recovery check required before this task runs again`);
+      await snapshotCodexUsageIfNeeded(interruptedTask, resolvedExecutor);
       return false;
     }
 
@@ -632,6 +646,7 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
       const commitResult = commitRunnerState(file, task.id, "waiting_for_limit");
       if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s waiting_for_limit state: ${commitResult.reason} -- next preflight() may see a dirty tree`);
       console.log(`WAITING_FOR_LIMIT ${task.id} -- retry after ${decision.retryAfter}`);
+      await snapshotCodexUsageIfNeeded(current, resolvedExecutor);
       return true; // a legitimate pause, not a failure
     }
     if (decision.action === "auth_required") {
@@ -647,6 +662,7 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
       const commitResult = commitRunnerState(file, task.id, "waiting_for_auth");
       if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s waiting_for_auth state: ${commitResult.reason} -- next preflight() may see a dirty tree`);
       console.error(`AUTHENTICATION_REQUIRED ${task.id} -- ${decision.fatal.category}: ${decision.fatal.matched} -- queue stopped, needs human action`);
+      await snapshotCodexUsageIfNeeded(current, resolvedExecutor);
       return false; // a hard stop: every other queued task would hit the same wall
     }
     if (decision.action === "done") {
@@ -654,6 +670,7 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
       const commitResult = commitRunnerState(file, task.id, "done bookkeeping");
       if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s done bookkeeping: ${commitResult.reason} -- next preflight() may see a dirty tree`);
       console.log(`DONE ${task.id} (${sessions.length} session(s))`);
+      await snapshotCodexUsageIfNeeded(current, resolvedExecutor);
       return true;
     }
     if (decision.action === "blocked") {
@@ -661,6 +678,7 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
       const commitResult = commitRunnerState(file, task.id, "blocked");
       if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s blocked state: ${commitResult.reason} -- next preflight() may see a dirty tree`);
       console.log(`BLOCKED ${task.id} — awaiting a real Owner decision (not a failure)`);
+      await snapshotCodexUsageIfNeeded(current, resolvedExecutor);
       return true;
     }
     if (decision.action === "continue_next_stage") {
@@ -668,6 +686,7 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
       const commitResult = commitRunnerState(file, task.id, `stage ${stageIndex + 1} handoff bookkeeping`);
       if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s stage bookkeeping: ${commitResult.reason} -- next stage's git-state block may show it as dirty`);
       console.log(`STAGE ${task.id} #${stageIndex + 1} ran out of time -- continuing with its handoff in a new session`);
+      await snapshotCodexUsageIfNeeded(current, resolvedExecutor);
       stageIndex += 1;
       continue;
     }
@@ -680,6 +699,7 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
       if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s failed state: ${commitResult.reason} -- next preflight() may see a dirty tree`);
     }
     console.error(`FAILED ${task.id} — queue stopped`);
+    await snapshotCodexUsageIfNeeded(current, resolvedExecutor);
     return false;
   }
 
@@ -694,6 +714,7 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
     if (!commitResult.ok) console.error(`WARNING: could not commit ${task.id}'s failed state: ${commitResult.reason} -- next preflight() may see a dirty tree`);
   }
   console.error(`FAILED ${task.id} — queue stopped (stage budget exhausted)`);
+  await snapshotCodexUsageIfNeeded(current, resolvedExecutor);
   return false;
 }
 
@@ -772,10 +793,12 @@ module.exports = {
   run, runClaude, killProcessTree, listProcessParents, load, save, preflight, nextTask, listTasks, execute, main,
   buildStagePrompt, gitStateBlockNow, handoffPathFor, readHandoff, commitRunnerState,
   readPendingCommand, clearPendingCommand, appendEvent, writeRunnerState, transition,
+  readUsageTracker, writeUsageTracker, recordSessionUsage,
+  snapshotCodexUsageIfNeeded, readLatestCodexUsageSnapshot,
   getRunnerState: () => runnerState,
   PRIORITY_RANK,
   CLAUDE, LOCK, LOG_DIR, HANDOFF_DIR, QUEUE, ROOT,
-  CONTROL_DIR, COMMANDS_FILE, RUNNER_STATE_FILE, EVENTS_FILE,
+  CONTROL_DIR, COMMANDS_FILE, RUNNER_STATE_FILE, EVENTS_FILE, USAGE_FILE, CODEX_USAGE_LOG_FILE,
 };
 
 if (require.main === module) {

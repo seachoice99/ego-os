@@ -1,0 +1,30 @@
+{
+  "id": "MED-06",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Multi-Executor Dispatch: executor-aware agent claim",
+  "display_summary": "Раннер не путает, кому какая задача принадлежит",
+  "prompt": "In automation/control_server.js's handleAgentClaim, pass the calling agent's own registered executor (already stored per-agent in the agents registry backing summarizeAgents(), currently display-only) into runner.nextTask() so a task with an explicit executor is only handed to an agent registered under that same executor; a task with executor:'auto' or absent may be claimed by any registered agent. Update agent registration (handleAgentRegister) to accept and persist an executor identity. Give automation/windows_agent.js an optional EGO_OS_AGENT_EXECUTOR env var (default 'claude') declaring which executor identity that agent instance registers as, so a second Windows Agent process (for Codex) can run alongside the existing Claude one with no code duplication -- both reuse the exact same windows_agent.js file, just different env config.",
+  "acceptance": [
+    "A claude-registered agent never receives a task with executor:'codex', and vice versa; both may receive executor:'auto'/absent tasks",
+    "Existing single-agent (Claude-only) behavior is completely unchanged when only one agent is ever registered -- zero regression, full existing test suite passes",
+    "A new integration test runs two fake agents (one claude, one codex identity) claiming from the same local queue and proves no cross-claim occurs",
+    "windows_agent.js requires no code fork or duplication to support a second executor identity -- only its own env var changes"
+  ],
+  "allowed_paths": [
+    "automation/control_server.js",
+    "automation/control_server.test.js",
+    "automation/windows_agent.js",
+    "automation/windows_agent.test.js"
+  ],
+  "forbidden_paths": [
+    "ego_os/",
+    "automation/web/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["RCI-02", "MED-02"],
+  "estimated_minutes": 75,
+  "result": null
+}

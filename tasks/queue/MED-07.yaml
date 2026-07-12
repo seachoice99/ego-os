@@ -1,0 +1,29 @@
+{
+  "id": "MED-07",
+  "status": "blocked",
+  "priority": "P3",
+  "title": "Multi-Executor Dispatch: Codex/OpenRouter usage baseline",
+  "display_summary": "Считаем, сколько реально тратится на Codex и бесплатные модели",
+  "prompt": "Once MED-02 and MED-03 have produced at least one real, run-derived result each (a real Codex-executed task and a real openrouter_free-executed task -- never estimates), extend automation/USAGE_BASELINE.md (if UOP-03 has already created it) or automation/README.md's own baseline section with these new rows, per ADR-0010 principle 7 (baseline measured before any 'more efficient' claim). Explicitly state these are first real data points for each new executor, NOT a claim that either is more or less efficient than the existing Claude baseline yet -- that claim requires a same-metric-set, same-or-comparable-workload comparison this task does not manufacture artificially.",
+  "acceptance": [
+    "Every number cited is real and run-derived, with the source task id and log path cited -- never an estimate presented as measured",
+    "No 'X is more efficient than Y' claim is made without an actual same-metric-set, same-or-comparable-workload comparison shown alongside it",
+    "Cross-links architecture/016_USAGE_OPTIMIZATION_POLICY.md and architecture/017_MULTI_EXECUTOR_DISPATCH.md rather than duplicating their tables"
+  ],
+  "allowed_paths": [
+    "automation/USAGE_BASELINE.md",
+    "automation/README.md"
+  ],
+  "forbidden_paths": [
+    "ego_os/",
+    "automation/session_manager.js",
+    "automation/claude_task_runner.js",
+    "automation/control_server.js"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["MED-02", "MED-03"],
+  "estimated_minutes": 45,
+  "result": null
+}

@@ -1,0 +1,30 @@
+{
+  "id": "MED-04",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Multi-Executor Dispatch: chooseExecutor routing + limit-aware fallback",
+  "display_summary": "Раннер сам решает, кому отдать задачу и когда переключиться",
+  "prompt": "Per architecture/017_MULTI_EXECUTOR_DISPATCH.md's chooseExecutor algorithm, implement automation/executor_routing.js: chooseExecutor(task, runnerState) is a pure function -- explicit task.executor wins outright (subject to the fail-closed/implemented check from RCI-02); task.executor:'auto' resolves a tier from task.model_tier (free -> openrouter_free, strong -> claude/codex plus review_executor set to the other, standard -> claude/codex, no review); if the resolved real executor (claude/codex) is currently waiting_for_limit/waiting_for_auth per its own recorded state AND the other real executor is not, substitute the other one -- log the substitution and its reason into result.sessions[].executor_fallback_reason, never silently. Never invents a fourth executor value. Never picks openrouter_free for a task whose allowed_paths reach outside MED-03's own permitted scope (call MED-03's validator, don't duplicate the path-scope check). Wire chooseExecutor as the single resolution point claude_task_runner.js's execute() calls before choosing a binary/dispatch path.",
+  "acceptance": [
+    "Pure function, fully unit tested: explicit-executor passthrough, tier resolution from model_tier, limit-aware fallback in both directions (claude unavailable -> codex, and vice versa), no fallback fabricated when both are unavailable",
+    "Every automatic substitution is logged with a concrete, non-generic reason string -- never silent",
+    "An integration test proves execute() actually calls chooseExecutor before spawning any process",
+    "Existing tasks without model_tier or executor:'auto' are completely unaffected (zero regression, full existing suite passes)"
+  ],
+  "allowed_paths": [
+    "automation/executor_routing.js",
+    "automation/executor_routing.test.js",
+    "automation/claude_task_runner.js"
+  ],
+  "forbidden_paths": [
+    "ego_os/",
+    "automation/control_server.js",
+    "automation/web/"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["RCI-02", "MED-02", "MED-03"],
+  "estimated_minutes": 75,
+  "result": null
+}

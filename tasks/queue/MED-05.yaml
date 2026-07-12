@@ -1,0 +1,30 @@
+{
+  "id": "MED-05",
+  "status": "blocked",
+  "priority": "P2",
+  "title": "Multi-Executor Dispatch: cross-executor independent review stage",
+  "display_summary": "Клод и Кодекс проверяют работу друг друга на сложных задачах",
+  "prompt": "Per architecture/017_MULTI_EXECUTOR_DISPATCH.md and ADR-0010 principle 5, implement review_executor handling: after a tier-2 task's implementer stage writes its normal TOKEN-EFFICIENCY-001 handoff file, if task.review_executor is set, the NEXT stage spawns that review_executor instead of continuing with the implementer, using a review-specific prompt built from the handoff (approve, or request changes with specific feedback). A request-changes outcome routes the task back to a further implementer stage (the ORIGINAL executor), embedding the review's feedback in that stage's own handoff/prompt. Only an explicit review approval allows status:'done'. Never skip this review to save tokens regardless of cost, per ADR-0010 principle 5 explicitly overriding cost-focused principles for tier-2 work.",
+  "acceptance": [
+    "Unit tests cover: approval path reaches 'done'; request-changes path returns to an implementer stage with the review's feedback embedded in the next handoff/prompt; a task without review_executor is completely unaffected",
+    "The review stage never gains write access beyond the task's own existing allowed_paths -- no expanded scope for the reviewing executor",
+    "An integration test proves two different executor binaries (fake_claude + fake_codex fixtures) are actually invoked in sequence for one tier-2 task",
+    "Existing tier-0/tier-1 tasks (no review_executor) are completely unaffected"
+  ],
+  "allowed_paths": [
+    "automation/session_manager.js",
+    "automation/claude_task_runner.js",
+    "automation/session_manager.test.js",
+    "automation/claude_task_runner.test.js"
+  ],
+  "forbidden_paths": [
+    "ego_os/",
+    "automation/control_server.js"
+  ],
+  "risks": [],
+  "owner_approved": false,
+  "release": "no_deploy",
+  "depends_on": ["MED-02", "MED-04"],
+  "estimated_minutes": 90,
+  "result": null
+}

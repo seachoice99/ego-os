@@ -47,25 +47,18 @@
   </section>
 
   <section class="panel panel-limits">
-    <h2>Лимиты Claude</h2>
+    <h2>Лимиты</h2>
     <div id="auth-state" class="muted">Состояние доступа неизвестно.</div>
     <dl class="kv">
       <dt>Ближайший reset лимита</dt><dd id="limit-reset">—</dd>
-      <dt>Usage / billing</dt><dd class="muted">Точный расход токенов и стоимость текущей сессии не измеряется этим интерфейсом — см. журнал сессий задачи для приблизительных значений (approx tokens).</dd>
     </dl>
+    <div id="usage-executors" class="usage-executors"></div>
   </section>
 
   <section class="panel panel-queue">
     <h2>Очередь</h2>
-    <table id="queue-table">
-      <thead>
-        <tr>
-          <th>ID</th><th>Название</th><th>Приоритет</th><th>Статус</th>
-          <th>Release</th><th>Owner</th><th>Причина блокировки</th><th>Действия</th>
-        </tr>
-      </thead>
-      <tbody id="queue-body"></tbody>
-    </table>
+    <p class="muted queue-hint">Карточки — это крупные инициативы; перетащите карточку, чтобы поменять её приоритет относительно других. Разверните карточку, чтобы увидеть и переупорядочить отдельные задачи внутри неё. Приоритет P0-P3 задачи всё равно важнее порядка — перетаскивание решает только очередность среди задач одного приоритета.</p>
+    <div id="queue-groups" class="queue-groups"></div>
   </section>
 
   <section class="panel panel-logs">
