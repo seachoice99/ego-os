@@ -1,6 +1,6 @@
 {
   "id": "SERVER-RUNNER-VERIFY",
-  "status": "ready",
+  "status": "held",
   "priority": "P0",
   "title": "Verify the server runner (ego-os-runner.service) end to end on the production VPS",
   "prompt": "This is a small, safe documentation-only task whose sole purpose is to prove the autonomous task runner works when running directly on the production VPS as ego-os-runner.service (SERVER-RUNNER-DARK-UI). Create automation/SERVER_RUNNER_VERIFICATION.md documenting: (1) the runner now runs as a dedicated systemd service on the same VPS as production Ego OS, under its own Linux user (egoos-runner) with its own separate git checkout and its own GitHub deploy key, never sharing /opt/ego-os with the live application; (2) the control server (automation/control_server.js) binds only to 127.0.0.1:4756, never a public port; (3) Ego OS's new /automation page reads this over that loopback API. Include the literal marker SERVER_RUNNER_VERIFIED somewhere in the file. Read the file back from disk and confirm the marker is present before finishing. Touch no other file besides this one and this task's own YAML. Do not touch ego_os/, tests/, or any other automation/ file. Run the existing test suites (node --test and pytest) and confirm both still pass. Commit (message starting 'SERVER-RUNNER-VERIFY:'), push to origin/main. release is no_deploy -- do not deploy, do not touch production /opt/ego-os. Record status done with a summary and commit hash, then make a separate final metadata commit of just this task's own YAML, push it too.",
@@ -27,5 +27,7 @@
   "risks": [],
   "owner_approved": false,
   "release": "no_deploy",
-  "result": null
+  "result": {
+    "held_from_status": "ready"
+  }
 }
