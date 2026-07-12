@@ -1,0 +1,76 @@
+/* Ego OS dark theme — shared palette for the Owner interface.
+   Not a design system: one flat set of variables + base element rules,
+   reused by every ego_os/templates/*.html page. /p/ presentation sites
+   are served by nginx directly and never load this file. */
+
+:root {
+  --bg: #14161a;
+  --card-bg: #1c1f26;
+  --card-bg-alt: #20242c;   /* table headers, code blocks, subtle panels */
+  --card-border: #2c313c;
+  --text: #e6e8eb;
+  --muted: #9aa2b1;
+  --link: #7aa2ff;
+
+  /* the six status colors */
+  --success: #3ecf8e;   /* green  -- done / accepted / delivered */
+  --running: #4d8dff;   /* blue   -- in progress / assigned */
+  --waiting: #f2b84b;   /* yellow -- waiting on a decision or a limit */
+  --danger:  #ef5a5a;   /* red    -- failed / rejected / dangerous action */
+  --ai:      #b389f9;   /* purple -- AI/model activity */
+  --unknown: #8b93a1;   /* gray   -- idle / stopped / archived / unset */
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+a { color: var(--link); }
+
+section, .card, .artifact, .proposal, .mandate-box, .stat-box, .file-item {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+}
+
+table th { background: var(--card-bg-alt); }
+table th, table td { border-color: var(--card-border); }
+
+input, textarea, select {
+  background: #0f1115;
+  color: var(--text);
+  border: 1px solid var(--card-border);
+}
+textarea:disabled, textarea:read-only, input:disabled { background: var(--card-bg-alt); color: var(--muted); }
+
+button {
+  background: #262b34;
+  color: var(--text);
+  border: 1px solid var(--card-border);
+}
+button:hover { background: #2e3440; }
+
+/* six-color status system -- every page's own status-* class maps onto one */
+.status-success, .status-done, .status-delivered, .status-accepted,
+.status-gap_approved, .status-approved, .status-sent, .status-active { color: var(--success); }
+
+.status-running, .status-in_progress, .status-assigned, .status-queued,
+.status-internally_validated, .status-negotiating { color: var(--running); }
+
+.status-waiting, .status-waiting_for_limit, .status-waiting_for_auth,
+.status-pending, .status-awaiting_approval, .status-blocked,
+.status-checkpointing, .status-held, .status-candidate, .status-pause_requested,
+.status-paused, .status-stop_requested, .status-waiting_for_owner { color: var(--waiting); }
+
+.status-error, .status-danger, .status-failed, .status-rejected,
+.status-gap_rejected, .status-interrupted, .status-authentication_required { color: var(--danger); }
+
+.status-ai, .status-model { color: var(--ai); }
+
+.status-idle, .status-unknown, .status-stopped, .status-skipped,
+.status-archived, .status-ready, .status-starting, .status-completed { color: var(--unknown); }
+
+/* monospace only for logs / Git / technical data, per the Owner's spec */
+.mono, pre, code, .markdown-body pre, .markdown-body code {
+  font-family: "Cascadia Code", Consolas, "SFMono-Regular", monospace;
+}

@@ -3,21 +3,21 @@
 <head>
   <meta charset="utf-8">
   <title>Ego OS — Asset Inbox</title>
+  <link rel="stylesheet" href="/static/theme.css">
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
     h1 { margin-bottom: 0.2rem; }
-    .subtitle { color: #666; margin-top: 0; }
-    section { margin-top: 1.5rem; border: 1px solid #e2e2e2; border-radius: 10px; padding: 1.2rem 1.4rem; background: #fff; }
-    section.rejected-archived { background: #fafafa; border-color: #e5e5e5; }
+    .subtitle { color: var(--muted); margin-top: 0; }
+    section { margin-top: 1.5rem; border-radius: 10px; padding: 1.2rem 1.4rem; }
+    section.rejected-archived { background: var(--card-bg-alt); }
     section h2 { margin-top: 0; }
     table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
-    .tag { display: inline-block; background: #f1f5f9; border-radius: 4px; padding: 0.15rem 0.5rem; margin: 0.1rem; font-size: 0.8rem; }
-    .status-candidate { color: #b45309; font-weight: 600; }
-    .status-accepted { color: #15803d; font-weight: 600; }
-    .status-internally_validated { color: #1d4ed8; font-weight: 600; }
-    .status-rejected, .status-archived { color: #991b1b; }
-    a { color: #1d4ed8; text-decoration: none; }
+    th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--card-border); vertical-align: top; }
+    .tag { display: inline-block; background: var(--card-bg-alt); border-radius: 4px; padding: 0.15rem 0.5rem; margin: 0.1rem; font-size: 0.8rem; }
+    .status-candidate { font-weight: 600; }
+    .status-accepted { font-weight: 600; }
+    .status-internally_validated { font-weight: 600; }
+    a { text-decoration: none; }
     a:hover { text-decoration: underline; }
   </style>
 </head>

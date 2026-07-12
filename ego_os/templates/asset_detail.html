@@ -3,23 +3,21 @@
 <head>
   <meta charset="utf-8">
   <title>Ego OS — Asset {{ asset.id }}</title>
+  <link rel="stylesheet" href="/static/theme.css">
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
     h1 { margin-bottom: 0.2rem; }
-    .subtitle { color: #666; margin-top: 0; }
-    section { margin-top: 1.5rem; border: 1px solid #e2e2e2; border-radius: 10px; padding: 1.2rem 1.4rem; background: #fff; }
+    .subtitle { color: var(--muted); margin-top: 0; }
+    section { margin-top: 1.5rem; border-radius: 10px; padding: 1.2rem 1.4rem; }
     h2 { margin-top: 0; font-size: 1.05rem; }
     table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
-    .tag { display: inline-block; background: #f1f5f9; border-radius: 4px; padding: 0.15rem 0.5rem; margin: 0.1rem; font-size: 0.8rem; }
-    .status-candidate { color: #b45309; font-weight: 600; }
-    .status-accepted { color: #15803d; font-weight: 600; }
-    .status-internally_validated { color: #1d4ed8; font-weight: 600; }
-    .status-rejected, .status-archived { color: #991b1b; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--card-border); vertical-align: top; }
+    .tag { display: inline-block; background: var(--card-bg-alt); border-radius: 4px; padding: 0.15rem 0.5rem; margin: 0.1rem; font-size: 0.8rem; }
+    .status-candidate, .status-accepted, .status-internally_validated { font-weight: 600; }
     .actions { margin-top: 0.8rem; display: flex; gap: 0.5rem; }
-    .btn-accept { background: #16a34a; color: #fff; border: none; border-radius: 6px; padding: 0.5rem 1.2rem; font-size: 1rem; cursor: pointer; }
-    .btn-reject { background: #dc2626; color: #fff; border: none; border-radius: 6px; padding: 0.5rem 1.2rem; font-size: 1rem; cursor: pointer; }
-    a { color: #1d4ed8; text-decoration: none; }
+    .btn-accept { background: var(--success); color: #06231a; border: none; border-radius: 6px; padding: 0.5rem 1.2rem; font-size: 1rem; cursor: pointer; }
+    .btn-reject { background: var(--danger); color: #2b0000; border: none; border-radius: 6px; padding: 0.5rem 1.2rem; font-size: 1rem; cursor: pointer; }
+    a { text-decoration: none; }
     a:hover { text-decoration: underline; }
   </style>
 </head>

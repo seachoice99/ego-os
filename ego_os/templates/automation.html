@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Ego OS — Автоматизация</title>
+  <link rel="stylesheet" href="/static/theme.css">
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { margin-bottom: 0.2rem; }
+    .subtitle { color: var(--muted); margin-top: 0; }
+    section { margin-top: 1.5rem; border-radius: 10px; padding: 1.2rem 1.4rem; }
+    section h2 { margin-top: 0; font-size: 1.05rem; }
+    a { text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--card-border); vertical-align: top; }
+
+    .unavailable-banner { background: rgba(242,184,75,0.12); border: 1px solid var(--waiting); color: var(--waiting); padding: 0.8rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+
+    .runner-bar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+    .runner-badge { font-weight: 700; padding: 0.3rem 0.9rem; border-radius: 999px; font-size: 0.9rem; }
+    .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .actions form { display: inline; }
+    button { padding: 0.45rem 1rem; font-size: 0.9rem; cursor: pointer; border-radius: 6px; }
+    button.danger { background: var(--danger); color: #2b0000; border: none; font-weight: 700; }
+    button.small { padding: 0.25rem 0.6rem; font-size: 0.8rem; }
+
+    dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 0.4rem 1rem; margin: 0.6rem 0 0; }
+    dl.kv dt { color: var(--muted); }
+    dl.kv dd { margin: 0; }
+
+    .row-actions { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+    .row-actions input[type=text] { width: 90px; font-size: 0.75rem; padding: 0.2rem 0.4rem; }
+
+    #log-view {
+      background: #0f1115; border: 1px solid var(--card-border); border-radius: 8px;
+      padding: 0.9rem; max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+      font-family: "Cascadia Code", Consolas, monospace; font-size: 0.78rem;
+    }
+    .events-list { max-height: 260px; overflow: auto; font-size: 0.85rem; }
+    .event-row { padding: 0.35rem 0; border-bottom: 1px solid var(--card-border); }
+    .event-row .ts { color: var(--muted); margin-right: 0.5rem; }
+  </style>
+</head>
+<body>
+  <p><a href="/dashboard">&larr; к Dashboard</a> &middot; <a href="/">Command</a></p>
+  <h1>Автоматизация</h1>
+  <p class="subtitle">Управление autonomous task runner &mdash; читает и командует через уже существующий control server (127.0.0.1, не публичный порт).</p>
+
+  {% if not control_server_available %}
+  <div class="unavailable-banner">
+    Control server runner недоступен на этом сервере (нет ответа на 127.0.0.1). Если он ещё не запущен как systemd-сервис,
+    нажмите «Старт» ниже, или проверьте <code>systemctl status ego-os-runner</code> на сервере.
+  </div>
+  {% endif %}
+
+  <section>
+    <div class="runner-bar">
+      <span class="runner-badge status-{{ runner_state or 'unknown' }}">{{ runner_state or 'неизвестно' }}</span>
+      <span class="subtitle" style="margin:0;">
+        {% if runner_pid %}PID {{ runner_pid }} &middot; {% endif %}
+        {% if runner_updated_at %}обновлено: {{ runner_updated_at }}{% endif %}
+        {% if runner_reason %} &middot; причина: {{ runner_reason }}{% endif %}
+      </span>
+      <div class="actions">
+        <form method="post" action="/automation/runner/start"><button title="Запустить runner в режиме наблюдения за очередью">Старт</button></form>
+        <form method="post" action="/automation/runner/pause"><button title="Не убьёт текущий процесс — дождётся безопасной точки (после теста/commit/push) и только тогда поставит на паузу">Пауза</button></form>
+        <form method="post" action="/automation/runner/resume"><button title="Проверит Git и отсутствие зависших процессов, продолжит с последней сохранённой точки в НОВОЙ сессии">Продолжить</button></form>
+        <form method="post" action="/automation/runner/stop-after-stage"><button title="Даст текущему этапу закончиться, сохранит handoff, не начнёт следующий этап">Остановить после этапа</button></form>
+        <form method="post" action="/automation/runner/emergency-stop" onsubmit="return confirm('Экстренная остановка немедленно прервёт текущий процесс Claude. Файлы не удаляются, Git не откатывается, но задача будет помечена interrupted и потребует проверки перед следующим запуском. Продолжить?');">
+          <input type="hidden" name="confirm" value="true">
+          <button class="danger" title="Требует подтверждения. Прерывает процесс немедленно.">Экстренная остановка</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Текущая задача</h2>
+    {% if current_task %}
+    <dl class="kv">
+      <dt>ID</dt><dd><strong>{{ current_task.id }}</strong> &mdash; {{ current_task.title }}</dd>
+      <dt>Статус</dt><dd><span class="status-{{ current_task.status }}">{{ current_task.status }}</span></dd>
+      <dt>Приоритет</dt><dd>{{ current_task.priority }}</dd>
+      <dt>Executor</dt><dd>claude <span class="subtitle" style="margin:0;">(codex — schema-only, ещё не реализован)</span></dd>
+      <dt>Модель</dt><dd>{{ last_session.model if last_session else "—" }}</dd>
+      <dt>Стадий выполнено</dt><dd>{{ current_task.sessions_count }}</dd>
+      <dt>Длительность последней сессии</dt><dd>{{ (last_session.duration_ms / 1000) | round(1) if last_session and last_session.duration_ms else "—" }} с</dd>
+      <dt>Waiting for limit</dt><dd>{{ "да, retry после " + current_task.retry_after if current_task.retry_after else "нет" }}</dd>
+      <dt>Waiting for auth</dt><dd>{{ "да" if current_task.status == "waiting_for_auth" else "нет" }}</dd>
+      <dt>Сводка</dt><dd>{{ current_task.summary or "—" }}</dd>
+      <dt>Push/Deploy</dt>
+      <dd>
+        {% if current_task_detail and current_task_detail.result and current_task_detail.result.final_sync %}
+        local={{ current_task_detail.result.final_sync.local_head }} origin={{ current_task_detail.result.final_sync.origin_head }} production={{ current_task_detail.result.final_sync.production_head }}
+        {% else %}
+        нет данных о финальной синхронизации для этой задачи (release: {{ current_task.release }})
+        {% endif %}
+      </dd>
+    </dl>
+    {% else %}
+    <p>Сейчас ни одна задача не выполняется.</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Последний лог</h2>
+    {% if latest_log %}
+    <p class="subtitle" style="margin:0 0 0.5rem;">{{ latest_log.file }}{% if latest_log.truncated %} (показан хвост){% endif %}</p>
+    <div id="log-view">{{ latest_log.content }}</div>
+    {% else %}
+    <p>Логов пока нет.</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Очередь</h2>
+    {% if tasks %}
+    <table>
+      <tr><th>ID</th><th>Название</th><th>Приоритет</th><th>Статус</th><th>Release</th><th>Owner</th><th>Причина блокировки</th><th>Действия</th></tr>
+      {% for t in tasks %}
+      <tr>
+        <td>{{ t.id }}</td>
+        <td>{{ t.title }}</td>
+        <td>{{ t.priority }}</td>
+        <td><span class="status-{{ t.status }}">{{ t.status }}</span></td>
+        <td>{{ t.release }}</td>
+        <td>{{ "да" if t.owner_approved else "нет" }}</td>
+        <td>{{ t.blocked_reason or "—" }}</td>
+        <td class="row-actions">
+          {% if t.status == "ready" %}
+          <form method="post" action="/automation/tasks/{{ t.id }}/hold"><button class="small">Отложить</button></form>
+          {% endif %}
+          {% if t.status == "held" %}
+          <form method="post" action="/automation/tasks/{{ t.id }}/unhold"><button class="small">Вернуть</button></form>
+          {% endif %}
+          {% if t.status in ("failed", "waiting_for_auth", "interrupted") %}
+          <form method="post" action="/automation/tasks/{{ t.id }}/retry" onsubmit="return confirm('Повторить задачу {{ t.id }}?');">
+            <input type="hidden" name="confirm" value="true">
+            <button class="small">Повторить</button>
+          </form>
+          {% endif %}
+          {% if t.status in ("ready", "held", "blocked", "waiting_for_limit", "waiting_for_auth") %}
+          <form method="post" action="/automation/tasks/{{ t.id }}/skip" onsubmit="return confirm('Пропустить задачу {{ t.id }}? Это действие требует причины.');">
+            <input type="hidden" name="confirm" value="true">
+            <input type="text" name="reason" placeholder="причина" required>
+            <button class="small">Пропустить</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p>Очередь пуста или control server недоступен.</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Последние события</h2>
+    <div class="events-list">
+      {% for e in events %}
+      <div class="event-row">
+        <span class="ts">{{ e.ts }}</span>
+        <strong>{{ e.event }}</strong> {{ e.previous_state }} &rarr; {{ e.new_state }}
+        {% if e.task_id %} &middot; {{ e.task_id }}{% endif %}
+        {% if e.reason %} &middot; {{ e.reason }}{% endif %}
+      </div>
+      {% else %}
+      <p>Событий пока нет.</p>
+      {% endfor %}
+    </div>
+  </section>
+</body>
+</html>

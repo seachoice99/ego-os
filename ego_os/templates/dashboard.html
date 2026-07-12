@@ -3,26 +3,21 @@
 <head>
   <meta charset="utf-8">
   <title>Ego OS — Dashboard</title>
+  <link rel="stylesheet" href="/static/theme.css">
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
     h1 { margin-bottom: 0.2rem; }
-    .subtitle { color: #666; margin-top: 0; }
+    .subtitle { color: var(--muted); margin-top: 0; }
     section { margin-top: 2rem; }
     table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; }
-    .status-idle { color: #666; }
-    .status-assigned { color: #b45309; font-weight: 600; }
-    .status-delivered { color: #15803d; }
-    .status-awaiting_approval { color: #b45309; font-weight: 600; }
-    .status-gap_approved { color: #15803d; }
-    .status-gap_rejected { color: #991b1b; }
-    a { color: #1d4ed8; text-decoration: none; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--card-border); }
+    a { text-decoration: none; }
     a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
   <h1>Ego OS</h1>
-  <p class="subtitle">Operations Dashboard &middot; total spend to date: ${{ "%.6f" | format(total_cost) }} &middot; <a href="/assets">Asset Inbox</a> &middot; <a href="/">&larr; Command</a></p>
+  <p class="subtitle">Operations Dashboard &middot; total spend to date: ${{ "%.6f" | format(total_cost) }} &middot; <a href="/assets">Asset Inbox</a> &middot; <a href="/automation">Automation</a> &middot; <a href="/">&larr; Command</a></p>
 
   <section>
     <h2>Employees</h2>

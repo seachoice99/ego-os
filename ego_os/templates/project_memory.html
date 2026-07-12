@@ -3,13 +3,14 @@
 <head>
   <meta charset="utf-8">
   <title>Ego OS — {{ project.name }} memory</title>
+  <link rel="stylesheet" href="/static/theme.css">
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
     h1 { margin-bottom: 0.2rem; }
-    .subtitle { color: #666; margin-top: 0; }
-    .entry { border: 1px solid #e2e2e2; border-radius: 8px; padding: 0.8rem 1rem; margin-top: 0.8rem; }
-    .entry .meta { font-size: 0.78rem; color: #777; margin-bottom: 0.3rem; }
-    a { color: #1d4ed8; text-decoration: none; }
+    .subtitle { color: var(--muted); margin-top: 0; }
+    .entry { border: 1px solid var(--card-border); background: var(--card-bg); border-radius: 8px; padding: 0.8rem 1rem; margin-top: 0.8rem; }
+    .entry .meta { font-size: 0.78rem; color: var(--muted); margin-bottom: 0.3rem; }
+    a { text-decoration: none; }
     a:hover { text-decoration: underline; }
   </style>
 </head>

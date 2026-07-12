@@ -3,31 +3,32 @@
 <head>
   <meta charset="utf-8">
   <title>Ego OS — Skill {{ manifest.id }}@{{ manifest.version }}</title>
+  <link rel="stylesheet" href="/static/theme.css">
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
     h1 { margin-bottom: 0.2rem; }
-    .subtitle { color: #666; margin-top: 0; }
-    section { margin-top: 1.5rem; border: 1px solid #e2e2e2; border-radius: 10px; padding: 1.2rem 1.4rem; background: #fff; }
+    .subtitle { color: var(--muted); margin-top: 0; }
+    section { margin-top: 1.5rem; border-radius: 10px; padding: 1.2rem 1.4rem; }
     h2 { margin-top: 0; font-size: 1.05rem; }
     table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
-    .tag { display: inline-block; background: #f1f5f9; border-radius: 4px; padding: 0.15rem 0.5rem; margin: 0.1rem; font-size: 0.8rem; }
-    .trust-approved { color: #15803d; font-weight: 600; }
-    .trust-revoked { color: #dc2626; font-weight: 600; }
-    .trust-deprecated { color: #b45309; font-weight: 600; }
-    .trust-discovered, .trust-quarantined, .trust-reviewing { color: #666; }
-    .lifecycle-revoked { color: #dc2626; font-weight: 600; }
-    .lifecycle-deprecated { color: #b45309; font-weight: 600; }
-    .lifecycle-active { color: #15803d; font-weight: 600; }
-    .banner-revoked { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 0.6rem 0.9rem; border-radius: 6px; margin-bottom: 1rem; }
-    code { background: #f1f5f9; border-radius: 4px; padding: 0.1rem 0.35rem; font-size: 0.85rem; }
-    a { color: #1d4ed8; text-decoration: none; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--card-border); vertical-align: top; }
+    .tag { display: inline-block; background: var(--card-bg-alt); border-radius: 4px; padding: 0.15rem 0.5rem; margin: 0.1rem; font-size: 0.8rem; }
+    .trust-approved { color: var(--success); font-weight: 600; }
+    .trust-revoked { color: var(--danger); font-weight: 600; }
+    .trust-deprecated { color: var(--waiting); font-weight: 600; }
+    .trust-discovered, .trust-quarantined, .trust-reviewing { color: var(--muted); }
+    .lifecycle-revoked { color: var(--danger); font-weight: 600; }
+    .lifecycle-deprecated { color: var(--waiting); font-weight: 600; }
+    .lifecycle-active { color: var(--success); font-weight: 600; }
+    .banner-revoked { background: rgba(239,90,90,0.12); border: 1px solid var(--danger); color: var(--danger); padding: 0.6rem 0.9rem; border-radius: 6px; margin-bottom: 1rem; }
+    code { background: var(--card-bg-alt); border-radius: 4px; padding: 0.1rem 0.35rem; font-size: 0.85rem; }
+    a { text-decoration: none; }
     a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
   <p><a href="/skills">&larr; back to skills</a></p>
-  <h1>{{ manifest.id }}<span style="color:#999;">@{{ manifest.version }}</span></h1>
+  <h1>{{ manifest.id }}<span style="color:var(--muted);">@{{ manifest.version }}</span></h1>
   <p class="subtitle">{{ manifest.name }} &mdash; {{ manifest.description }}</p>
 
   {% if manifest.lifecycle.state == "revoked" %}

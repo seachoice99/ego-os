@@ -3,40 +3,40 @@
 <head>
   <meta charset="utf-8">
   <title>Ego OS — Command</title>
+  <link rel="stylesheet" href="/static/theme.css">
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
     h1 { margin-bottom: 0.2rem; }
-    .subtitle { color: #666; margin-top: 0; }
-    section { margin-top: 2rem; border: 1px solid #e2e2e2; border-radius: 10px; padding: 1.2rem 1.4rem; background: #fff; }
+    .subtitle { color: var(--muted); margin-top: 0; }
+    section { margin-top: 2rem; border: 1px solid var(--card-border); border-radius: 10px; padding: 1.2rem 1.4rem; }
     section h2 { margin-top: 0; }
     table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--card-border); vertical-align: top; }
     textarea { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 1rem; padding: 0.6rem; }
-    textarea:disabled, textarea:read-only { background: #f3f3f3; color: #888; }
     input[type=text], input[type=number] { padding: 0.4rem 0.6rem; font-size: 1rem; box-sizing: border-box; }
     button { margin-top: 0.5rem; padding: 0.5rem 1.2rem; font-size: 1rem; cursor: pointer; display: inline-flex; align-items: center; gap: 0.5rem; }
     button:disabled { cursor: not-allowed; opacity: 0.85; }
-    a { color: #1d4ed8; text-decoration: none; }
+    a { text-decoration: none; }
     a:hover { text-decoration: underline; }
     .nav { margin-bottom: 1rem; }
-    .mandate-box { background: #f8fafc; border: 1px solid #e2e2e2; border-radius: 8px; padding: 0.8rem 1rem; margin-bottom: 1rem; }
-    .mandate-box .label { font-size: 0.75rem; text-transform: uppercase; color: #777; letter-spacing: 0.03em; }
-    .proposal { border: 1px solid #e2e2e2; border-radius: 8px; padding: 0.8rem 1rem; margin-bottom: 0.8rem; }
+    .mandate-box { border-radius: 8px; padding: 0.8rem 1rem; margin-bottom: 1rem; }
+    .mandate-box .label { font-size: 0.75rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.03em; }
+    .proposal { border: 1px solid var(--card-border); border-radius: 8px; padding: 0.8rem 1rem; margin-bottom: 0.8rem; }
     .proposal h3 { margin: 0 0 0.4rem; }
     .proposal dl { margin: 0.4rem 0; }
-    .proposal dt { font-weight: 600; font-size: 0.85rem; color: #555; margin-top: 0.4rem; }
+    .proposal dt { font-weight: 600; font-size: 0.85rem; color: var(--muted); margin-top: 0.4rem; }
     .proposal dd { margin: 0; }
     .proposal-actions { margin-top: 0.6rem; display: flex; gap: 0.5rem; }
-    .btn-approve { background: #16a34a; color: #fff; border: none; border-radius: 6px; }
-    .btn-reject { background: #dc2626; color: #fff; border: none; border-radius: 6px; }
+    .btn-approve { background: var(--success); color: #06231a; border: none; border-radius: 6px; }
+    .btn-reject { background: var(--danger); color: #2b0000; border: none; border-radius: 6px; }
 
-    .spinner { width: 0.9rem; height: 0.9rem; border: 2px solid rgba(255,255,255,0.5); border-top-color: #fff; border-radius: 50%; display: inline-block; animation: spin 0.7s linear infinite; }
+    .spinner { width: 0.9rem; height: 0.9rem; border: 2px solid rgba(255,255,255,0.3); border-top-color: var(--text); border-radius: 50%; display: inline-block; animation: spin 0.7s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .working-note { margin: 0.4rem 0 0; font-size: 0.85rem; color: #b45309; display: none; }
+    .working-note { margin: 0.4rem 0 0; font-size: 0.85rem; color: var(--waiting); display: none; }
     body.is-loading .working-note { display: block; }
     body.is-loading::before {
       content: ""; position: fixed; top: 0; left: 0; height: 3px; width: 100%;
-      background: linear-gradient(90deg, #1d4ed8, #93c5fd, #1d4ed8); background-size: 200% 100%;
+      background: linear-gradient(90deg, var(--running), #93c5fd, var(--running)); background-size: 200% 100%;
       animation: loading-bar 1s linear infinite; z-index: 999;
     }
     @keyframes loading-bar { from { background-position: 200% 0; } to { background-position: 0 0; } }
@@ -57,9 +57,9 @@
       <div class="label">Risk policy</div>
       <p>{{ mandate.risk_policy }}</p>
     </div>
-    <p style="color:#666; font-size:0.85rem;">Submitting below records a new version -- it does not overwrite this one.</p>
+    <p style="color:var(--muted); font-size:0.85rem;">Submitting below records a new version -- it does not overwrite this one.</p>
     {% else %}
-    <p style="color:#b45309;">No mandate has been approved yet. Per Stage 1 (Formation), the company has no external footprint until the Owner approves a mission, starting capital, and risk policy as a single package.</p>
+    <p style="color:var(--waiting);">No mandate has been approved yet. Per Stage 1 (Formation), the company has no external footprint until the Owner approves a mission, starting capital, and risk policy as a single package.</p>
     {% endif %}
     <form method="post" action="/mandate">
       <label>Mission</label><br>
@@ -83,7 +83,7 @@
     <h2>Pending Employee Creation Proposals</h2>
     {% for p in proposals %}
     <div class="proposal">
-      <h3>{{ p.title }} <span style="font-weight:400;color:#777;">&middot; {{ p.department }}</span></h3>
+      <h3>{{ p.title }} <span style="font-weight:400;color:var(--muted);">&middot; {{ p.department }}</span></h3>
       <dl>
         <dt>Trigger</dt><dd>{{ p.trigger_text }}</dd>
         <dt>Mission</dt><dd>{{ p.mission }}</dd>
@@ -130,7 +130,7 @@
   <section>
     <h2>Assign work to the company</h2>
     <form method="post" action="/tasks" id="task-form" enctype="multipart/form-data">
-      <label for="project-select" style="display: block; margin-bottom: 0.3rem; font-size: 0.9rem; color: #444;">Project</label>
+      <label for="project-select" style="display: block; margin-bottom: 0.3rem; font-size: 0.9rem; color: var(--muted);">Project</label>
       <select name="project_id" id="project-select" style="padding: 0.4rem 0.6rem; font-size: 1rem; margin-bottom: 0.6rem;">
         {% for p in projects %}
         <option value="{{ p.id }}">{{ p.name }}</option>
@@ -138,11 +138,11 @@
       </select>
       <textarea name="request_text" id="request-text" rows="3" placeholder="Describe what you'd like the company to do... (you can also drag a .zip/.pdf slide deck onto this box)" required></textarea>
       <br>
-      <label style="display: block; margin: 0.6rem 0 0.3rem; font-size: 0.85rem; color: #666;">
+      <label style="display: block; margin: 0.6rem 0 0.3rem; font-size: 0.85rem; color: var(--muted);">
         Slide deck (optional — a .zip of PNG/JPG images or a .pdf, only used for Presentation Website requests)
       </label>
       <input type="file" name="attachment" id="attachment-input" accept=".zip,.pdf">
-      <span id="attachment-note" style="font-size: 0.8rem; color: #15803d; margin-left: 0.5rem;"></span>
+      <span id="attachment-note" style="font-size: 0.8rem; color: var(--success); margin-left: 0.5rem;"></span>
       <br>
       <button type="submit" id="submit-btn" style="margin-top: 0.6rem;">Submit</button>
       <p class="working-note">The company is executing your task — this can take a few seconds while employees draft and review the work.</p>

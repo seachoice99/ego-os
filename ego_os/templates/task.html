@@ -6,19 +6,20 @@
   <meta http-equiv="refresh" content="3">
   {% endif %}
   <title>Ego OS — Task #{{ task.id }}</title>
+  <link rel="stylesheet" href="/static/theme.css">
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; line-height: 1.5; }
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
     h1 { margin-bottom: 0.2rem; }
-    .request { color: #444; font-style: italic; margin-top: 0; }
+    .request { color: var(--muted); font-style: italic; margin-top: 0; }
     section { margin-top: 1.5rem; }
-    a { color: #1d4ed8; text-decoration: none; }
+    a { text-decoration: none; }
     a:hover { text-decoration: underline; }
 
     /* Artifact cards: give employee output the feel of a company
        deliverable rather than a raw chat reply. */
-    .artifact { border: 1px solid #e2e2e2; border-radius: 10px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.04); overflow: hidden; }
-    .artifact-header { display: flex; align-items: center; gap: 0.5rem; background: #f7f7f8; padding: 0.7rem 1.1rem; border-bottom: 1px solid #e2e2e2; }
-    .artifact-header h2 { margin: 0; font-size: 1rem; font-weight: 600; color: #333; }
+    .artifact { border-radius: 10px; overflow: hidden; }
+    .artifact-header { display: flex; align-items: center; gap: 0.5rem; background: var(--card-bg-alt); padding: 0.7rem 1.1rem; border-bottom: 1px solid var(--card-border); }
+    .artifact-header h2 { margin: 0; font-size: 1rem; font-weight: 600; }
     .artifact-icon { font-size: 1.1rem; }
     .artifact-body { padding: 1.2rem 1.4rem; }
 
@@ -28,42 +29,42 @@
     .markdown-body p { margin: 0.6em 0; }
     .markdown-body ul, .markdown-body ol { margin: 0.6em 0; padding-left: 1.4em; }
     .markdown-body li { margin: 0.2em 0; }
-    .markdown-body blockquote { margin: 0.8em 0; padding: 0.4em 1em; border-left: 3px solid #cbd5e1; background: #f8fafc; color: #475569; }
-    .markdown-body code { background: #f1f1f1; padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.9em; }
-    .markdown-body pre { background: #1e1e1e; color: #e5e5e5; padding: 0.9em 1em; border-radius: 6px; overflow-x: auto; }
+    .markdown-body blockquote { margin: 0.8em 0; padding: 0.4em 1em; border-left: 3px solid var(--card-border); background: var(--card-bg-alt); color: var(--muted); }
+    .markdown-body code { background: var(--card-bg-alt); padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.9em; }
+    .markdown-body pre { background: #0f1115; color: var(--text); padding: 0.9em 1em; border-radius: 6px; overflow-x: auto; }
     .markdown-body pre code { background: none; padding: 0; color: inherit; }
     .markdown-body table { width: 100%; border-collapse: collapse; margin: 0.8em 0; }
-    .markdown-body th, .markdown-body td { text-align: left; padding: 0.5rem 0.7rem; border: 1px solid #e2e2e2; }
-    .markdown-body th { background: #f7f7f8; }
-    .markdown-body tr:nth-child(even) td { background: #fafafa; }
+    .markdown-body th, .markdown-body td { text-align: left; padding: 0.5rem 0.7rem; border: 1px solid var(--card-border); }
+    .markdown-body th { background: var(--card-bg-alt); }
+    .markdown-body tr:nth-child(even) td { background: var(--card-bg-alt); }
 
     /* Timeline */
-    .timeline { list-style: none; margin: 0; padding: 0 0 0 0.4rem; border-left: 2px solid #e2e2e2; }
+    .timeline { list-style: none; margin: 0; padding: 0 0 0 0.4rem; border-left: 2px solid var(--card-border); }
     .timeline-item { position: relative; padding: 0 0 1.1rem 1.4rem; }
     .timeline-item:last-child { padding-bottom: 0; }
-    .timeline-dot { position: absolute; left: -0.44rem; top: 0.15rem; width: 0.7rem; height: 0.7rem; border-radius: 50%; background: #1d4ed8; border: 2px solid #fff; box-shadow: 0 0 0 2px #e2e2e2; }
+    .timeline-dot { position: absolute; left: -0.44rem; top: 0.15rem; width: 0.7rem; height: 0.7rem; border-radius: 50%; background: var(--running); border: 2px solid var(--bg); box-shadow: 0 0 0 2px var(--card-border); }
     .timeline-step { font-weight: 600; text-transform: capitalize; }
-    .timeline-employee { font-weight: 400; color: #777; }
-    .timeline-detail { color: #444; margin-top: 0.1rem; }
+    .timeline-employee { font-weight: 400; color: var(--muted); }
+    .timeline-detail { color: var(--muted); margin-top: 0.1rem; }
 
-    .qa-pass { border-left: 3px solid #15803d; padding-left: 1rem; }
-    .qa-revise { border-left: 3px solid #b45309; padding-left: 1rem; }
+    .qa-pass { border-left: 3px solid var(--success); padding-left: 1rem; }
+    .qa-revise { border-left: 3px solid var(--waiting); padding-left: 1rem; }
 
     /* Cost & usage as stat cards rather than a plain table. */
     .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.8rem; }
-    .stat-box { border: 1px solid #e2e2e2; border-radius: 8px; padding: 0.8rem 1rem; background: #fff; }
-    .stat-label { font-size: 0.78rem; color: #777; text-transform: uppercase; letter-spacing: 0.03em; }
+    .stat-box { border-radius: 8px; padding: 0.8rem 1rem; }
+    .stat-label { font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
     .stat-value { font-size: 1.1rem; font-weight: 600; margin-top: 0.2rem; }
 
     /* Generated document artifacts (v0.2 Document Generation): real files
        the Owner can download, not just inline text. */
     .files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
-    .file-item { display: flex; align-items: center; gap: 0.6rem; border: 1px solid #e2e2e2; border-radius: 8px; padding: 0.6rem 0.9rem; }
-    .file-ext { font-size: 0.72rem; font-weight: 700; color: #fff; background: #64748b; border-radius: 4px; padding: 0.15rem 0.4rem; text-transform: uppercase; }
-    .file-ext-pdf { background: #b91c1c; }
-    .file-ext-docx { background: #1d4ed8; }
-    .file-ext-md { background: #444; }
-    .file-ext-xlsx { background: #15803d; }
+    .file-item { display: flex; align-items: center; gap: 0.6rem; border-radius: 8px; padding: 0.6rem 0.9rem; }
+    .file-ext { font-size: 0.72rem; font-weight: 700; color: #fff; background: var(--unknown); border-radius: 4px; padding: 0.15rem 0.4rem; text-transform: uppercase; }
+    .file-ext-pdf { background: var(--danger); }
+    .file-ext-docx { background: var(--running); }
+    .file-ext-md { background: var(--unknown); }
+    .file-ext-xlsx { background: var(--success); }
     .file-name { flex: 1; }
     .file-download { font-weight: 600; }
   </style>

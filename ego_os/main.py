@@ -13,11 +13,34 @@ from fastapi.templating import Jinja2Templates
 
 load_dotenv()
 
-from ego_os import employees, skills, store, tools, worker  # noqa: E402
+from ego_os import automation_bridge, employees, skills, store, tools, worker  # noqa: E402
 from ego_os.auth import require_owner, verify_csrf  # noqa: E402
 
 app = FastAPI(title="Ego OS", dependencies=[Depends(require_owner), Depends(verify_csrf)])
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+_STATIC_DIR = Path(__file__).parent / "static"
+
+
+@app.get("/static/{filename}")
+def static_asset(filename: str):
+    """A single, explicit route rather than a StaticFiles mount -- mounting
+    StaticFiles as a sub-application would bypass the app-level
+    require_owner/verify_csrf dependencies (they attach to path operations,
+    not to a Mount()'d ASGI app), which would make ego_os/static/ the one
+    unauthenticated directory in an app whose whole security model is
+    "every route requires Owner auth". Path-traversal-safe: resolves and
+    confirms containment before ever opening a file, exactly like the
+    existing /tasks/{id}/artifacts/{filename} download route."""
+    if "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=404, detail="not found")
+    resolved = (_STATIC_DIR / filename).resolve()
+    if not str(resolved).startswith(str(_STATIC_DIR.resolve()) + "\\") and not str(resolved).startswith(str(_STATIC_DIR.resolve()) + "/"):
+        raise HTTPException(status_code=404, detail="not found")
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="not found")
+    media_type = "text/css" if resolved.suffix == ".css" else "application/javascript" if resolved.suffix == ".js" else "application/octet-stream"
+    return FileResponse(resolved, media_type=media_type)
 
 # Safe file intake (v0.4.1). Matches nginx's client_max_body_size on
 # production, but enforced here too since the app must not rely solely on
@@ -145,6 +168,104 @@ def dashboard(request: Request):
             "total_cost": store.get_total_cost(),
         },
     )
+
+
+_RUNNER_COMMAND_ROUTE_NAMES = {"start", "pause", "resume", "stop-after-stage", "emergency-stop"}
+_TASK_ACTION_ROUTE_NAMES = {"hold", "unhold", "retry", "skip"}
+_CONFIRM_REQUIRED_ACTIONS = {"emergency-stop", "skip", "retry"}
+
+
+def _current_task_detail(current_task: dict | None) -> dict | None:
+    """Full task record (result.sessions[], handoff, etc.) for whatever
+    /api/status reports as the current task -- fetched once and reused for
+    both the session/model display and the latest-log tail. Returns None
+    (never raises) if there's no current task or the control server can't
+    be reached, so the page still renders without this section."""
+    if not current_task or not isinstance(current_task, dict):
+        return None
+    detail = automation_bridge.get_task(current_task["id"])
+    if not detail["ok"] or not detail["data"]:
+        return None
+    return detail["data"].get("task")
+
+
+def _latest_log_tail(task_detail: dict | None) -> dict | None:
+    """Best-effort: the current task's own most recent session log, tailed
+    through the control server's existing secret-masked /api/logs route."""
+    if not task_detail:
+        return None
+    sessions = ((task_detail.get("result") or {}).get("sessions")) or []
+    if not sessions:
+        return None
+    log_path = sessions[-1].get("log")
+    if not log_path:
+        return None
+    basename = log_path.replace("\\", "/").rsplit("/", 1)[-1]
+    logs = automation_bridge.get_logs(basename)
+    if not logs["ok"] or not logs["data"]:
+        return None
+    return logs["data"]
+
+
+@app.get("/automation")
+def automation_page(request: Request):
+    """Owner-authenticated view of the autonomous task runner -- reads the
+    EXISTING RUNNER-CONTROL-UI control server (automation/control_server.js)
+    over its own local, loopback-only API; never re-implements the runner's
+    state machine or task loading. Degrades to an honest 'runner control
+    server unavailable' state rather than a 500 when that server isn't
+    running (e.g. this exact test environment, or before the systemd unit
+    is installed)."""
+    status = automation_bridge.get_status()
+    tasks_result = automation_bridge.get_tasks()
+    events_result = automation_bridge.get_events(50)
+
+    current_task = (status.get("data") or {}).get("current_task") if status["ok"] else None
+    task_detail = _current_task_detail(current_task)
+    last_session = ((task_detail or {}).get("result") or {}).get("sessions", [])[-1:] if task_detail else []
+    return templates.TemplateResponse(
+        request,
+        "automation.html",
+        {
+            "control_server_available": status["ok"],
+            "runner_state": (status.get("data") or {}).get("runner_state") if status["ok"] else None,
+            "runner_pid": (status.get("data") or {}).get("pid") if status["ok"] else None,
+            "runner_updated_at": (status.get("data") or {}).get("updated_at") if status["ok"] else None,
+            "runner_reason": (status.get("data") or {}).get("reason") if status["ok"] else None,
+            "current_task": current_task,
+            "current_task_detail": task_detail,
+            "last_session": last_session[0] if last_session else None,
+            "tasks": (tasks_result.get("data") or {}).get("tasks", []) if tasks_result["ok"] else [],
+            "events": list(reversed((events_result.get("data") or {}).get("events", []))) if events_result["ok"] else [],
+            "latest_log": _latest_log_tail(task_detail),
+        },
+    )
+
+
+@app.post("/automation/runner/{command}")
+def automation_runner_command(command: str, confirm: str = Form(None)):
+    if command not in _RUNNER_COMMAND_ROUTE_NAMES:
+        raise HTTPException(status_code=404, detail="unknown runner command")
+    body = {}
+    if command in _CONFIRM_REQUIRED_ACTIONS:
+        body["confirm"] = confirm in ("true", "on", "1")
+    automation_bridge.post_runner_command(command, body)
+    return RedirectResponse(url="/automation", status_code=303)
+
+
+@app.post("/automation/tasks/{task_id}/{action}")
+def automation_task_action(task_id: str, action: str, reason: str = Form(None), confirm: str = Form(None)):
+    if action not in _TASK_ACTION_ROUTE_NAMES:
+        raise HTTPException(status_code=404, detail="unknown task action")
+    if not automation_bridge.is_safe_task_id(task_id):
+        raise HTTPException(status_code=400, detail="invalid task id")
+    body = {}
+    if reason:
+        body["reason"] = reason
+    if action in _CONFIRM_REQUIRED_ACTIONS:
+        body["confirm"] = confirm in ("true", "on", "1")
+    automation_bridge.post_task_action(task_id, action, body)
+    return RedirectResponse(url="/automation", status_code=303)
 
 
 @app.get("/employees/{employee_id}")
