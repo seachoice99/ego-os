@@ -1,6 +1,6 @@
 {
   "id": "RCI-02",
-  "status": "blocked",
+  "status": "done",
   "priority": "P2",
   "title": "Runner Integration: fail-closed executor validation",
   "prompt": "In automation/claude_task_runner.js's execute() (or a small new pure helper in automation/session_manager.js, matching the existing pure-logic-plus-thin-shell pattern), add validation of the optional task.executor field: absent, 'claude', or 'auto' proceeds exactly as today; 'codex' and 'openrouter_free' are valid *schema* values but have NO valid runtime path yet (MED-02/MED-03 are not done) -- both must be rejected exactly like any other unrecognized value until their respective implementation task ships. Any unrecognized or not-yet-implemented value causes execute() to refuse the task immediately -- status 'failed', a clear result.runner_error naming the unimplemented executor, no session spawned at all. This mirrors the existing fail-closed pattern from the RUNNER-CONTROL-UI auth defect (never silently proceed on an unimplemented capability). Add unit tests (pure logic) and one integration test proving execute() refuses tasks with executor:'codex' and executor:'openrouter_free' without ever spawning the fake Claude process.",
@@ -27,5 +27,19 @@
   "release": "no_deploy",
   "depends_on": ["RCI-01"],
   "estimated_minutes": 60,
-  "result": null
+  "result": {
+    "changed_files": [
+      "automation/claude_task_runner.js",
+      "automation/session_manager.js",
+      "automation/claude_task_runner.test.js",
+      "automation/session_manager.test.js"
+    ],
+    "summary": "Added pure task.executor validation and wired execute() to reject codex, openrouter_free, unknown, or invalid values before preflight or process spawn, while preserving absent/claude/auto behavior.",
+    "tests": {
+      "node_test": "193 passed",
+      "diff_check": "passed"
+    },
+    "commit": "8113ada"
+  },
+  "completed_at": "2026-07-13T11:04:19.425Z"
 }
