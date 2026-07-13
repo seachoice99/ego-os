@@ -70,6 +70,9 @@ $action = New-ScheduledTaskAction -Execute "powershell.exe" `
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 $settings = New-ScheduledTaskSettingsSet `
     -Hidden `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -DontStopOnIdleEnd `
     -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 2) `
     -ExecutionTimeLimit (New-TimeSpan) `
     -MultipleInstances IgnoreNew `
