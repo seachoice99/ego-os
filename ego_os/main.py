@@ -146,42 +146,111 @@ def on_shutdown():
     worker.stop()
 
 
+_RUNNER_COMMAND_ROUTE_NAMES = {"start", "pause", "resume", "stop-after-stage", "emergency-stop"}
+_TASK_ACTION_ROUTE_NAMES = {"hold", "unhold", "retry", "skip"}
+_CONFIRM_REQUIRED_ACTIONS = {"emergency-stop", "skip", "retry"}
+
+# The only pages a runner-command/task-action POST is ever allowed to send
+# the Owner back to. Deliberately never derived from the Referer header --
+# an explicit `return_to` form field (rendered by each page's own forms) is
+# checked against this fixed set, and anything else (missing, malformed, or
+# an attempt to point elsewhere) falls back to /automation, never an
+# open redirect.
+_RETURN_TO_ALLOWLIST = {"/", "/dashboard", "/automation"}
+
+
+def _safe_return_to(value: str | None) -> str:
+    return value if value in _RETURN_TO_ALLOWLIST else "/automation"
+
+
+def _runner_snapshot() -> dict:
+    """Compact, read-only summary of the autonomous runner + Windows Runner
+    Agent -- the one place /, /dashboard, and /automation all get this data
+    from, so status/usage are fetched and shaped exactly once per request
+    rather than three times with three slightly different inline
+    extractions. Talks to the control server exclusively through the
+    existing automation_bridge (already hardened to loopback-only, no
+    userinfo, approved-port-only per ADR-0013) -- issues no POST, never
+    touches an external API, never mutates anything. automation_bridge's
+    own functions already never raise (they fail closed to {"ok": False}
+    on any error), so this helper inherits that guarantee rather than
+    adding its own try/except."""
+    status = automation_bridge.get_status()
+    usage_result = automation_bridge.get_usage()
+    available = status["ok"]
+    data = status.get("data") or {}
+    return {
+        "available": available,
+        "runner_state": data.get("runner_state") if available else None,
+        "pid": data.get("pid") if available else None,
+        "runner_updated_at": data.get("updated_at") if available else None,
+        "runner_reason": data.get("reason") if available else None,
+        "current_task": data.get("current_task") if available else None,
+        "agents": data.get("agents", []) if available else [],
+        "any_agent_online": data.get("any_agent_online", False) if available else False,
+        "usage": (usage_result.get("data") or {}).get("usage") if usage_result["ok"] else None,
+    }
+
+
 @app.get("/")
 def command(request: Request):
-    """Strategy / Command Interface (v0.3): where the Owner submits work,
-    approves the mandate, and reviews pending Employee Creation Proposals --
-    the action surface, split out from the observe-only Dashboard."""
+    """Command Interface (v0.5): a calm, chat-first surface where the Owner
+    submits work as a ProductTask -- NOT a live conversation with the
+    Orchestrator (the backend has no such capability yet, see ADR-0001).
+    Administrative surfaces (mandate, project management, employee
+    proposals) live on /dashboard now; this page keeps only what's needed
+    to submit a task and see the runner/spend at a glance."""
+    tasks = store.get_tasks()
     return templates.TemplateResponse(
         request,
         "command.html",
         {
             "projects": store.get_projects(),
-            "mandate": store.get_current_mandate(),
-            "proposals": store.get_pending_proposals(),
+            "last_task": tasks[0] if tasks else None,
+            "runner": _runner_snapshot(),
+            "total_cost": store.get_total_cost(),
+            "return_to": "/",
         },
     )
 
 
 @app.get("/dashboard")
 def dashboard(request: Request):
-    """Operations Dashboard (v0.3): observe-only -- roster, tasks, cost.
-    No POST actions live here, so a future thin/mobile client could read
-    this surface without server-rendered-page assumptions leaking in."""
+    """Operations Dashboard (v0.5): the single operational page -- runner/
+    Windows Agent priority status, the AutomationTask queue (with its
+    existing hold/unhold/retry/skip actions and drag-and-drop reorder), and
+    company operations (ProductTask history, projects, employees, pending
+    Employee Creation Proposals, mandate), with recent runner events and
+    the latest session log tucked into collapsed <details> at the bottom so
+    they don't compete with the operational summary above the fold."""
+    snapshot = _runner_snapshot()
+    tasks_result = automation_bridge.get_tasks()
+    events_result = automation_bridge.get_events(50)
+    task_detail = _current_task_detail(snapshot["current_task"])
+    last_session = ((task_detail or {}).get("result") or {}).get("sessions", [])[-1:] if task_detail else []
+    runner_tasks = (tasks_result.get("data") or {}).get("tasks", []) if tasks_result["ok"] else []
+    attention_statuses = {"blocked", "waiting_for_auth", "failed", "interrupted"}
     return templates.TemplateResponse(
         request,
         "dashboard.html",
         {
             "employees": store.get_employees(),
-            "tasks": store.get_tasks(),
+            "product_tasks": store.get_tasks(),
             "projects": store.get_projects(),
             "total_cost": store.get_total_cost(),
+            "mandate": store.get_current_mandate(),
+            "proposals": store.get_pending_proposals(),
+            "runner": snapshot,
+            "current_task_detail": task_detail,
+            "last_session": last_session[0] if last_session else None,
+            "groups": _group_tasks_casually(runner_tasks),
+            "ready_count": sum(1 for t in runner_tasks if t.get("status") == "ready"),
+            "attention_count": sum(1 for t in runner_tasks if t.get("status") in attention_statuses),
+            "events": list(reversed((events_result.get("data") or {}).get("events", []))) if events_result["ok"] else [],
+            "latest_log": _latest_log_tail(task_detail),
+            "return_to": "/dashboard",
         },
     )
-
-
-_RUNNER_COMMAND_ROUTE_NAMES = {"start", "pause", "resume", "stop-after-stage", "emergency-stop"}
-_TASK_ACTION_ROUTE_NAMES = {"hold", "unhold", "retry", "skip"}
-_CONFIRM_REQUIRED_ACTIONS = {"emergency-stop", "skip", "retry"}
 
 
 def _current_task_detail(current_task: dict | None) -> dict | None:
@@ -255,30 +324,28 @@ def automation_page(request: Request):
     local dashboard (automation/web/) was removed since the control server
     runs co-located with this app and was never reachable from the Owner's
     own browser."""
-    status = automation_bridge.get_status()
+    snapshot = _runner_snapshot()
     tasks_result = automation_bridge.get_tasks()
     events_result = automation_bridge.get_events(50)
-    usage_result = automation_bridge.get_usage()
 
-    current_task = (status.get("data") or {}).get("current_task") if status["ok"] else None
-    task_detail = _current_task_detail(current_task)
+    task_detail = _current_task_detail(snapshot["current_task"])
     last_session = ((task_detail or {}).get("result") or {}).get("sessions", [])[-1:] if task_detail else []
     tasks = (tasks_result.get("data") or {}).get("tasks", []) if tasks_result["ok"] else []
     return templates.TemplateResponse(
         request,
         "automation.html",
         {
-            "control_server_available": status["ok"],
-            "runner_state": (status.get("data") or {}).get("runner_state") if status["ok"] else None,
-            "runner_pid": (status.get("data") or {}).get("pid") if status["ok"] else None,
-            "runner_updated_at": (status.get("data") or {}).get("updated_at") if status["ok"] else None,
-            "runner_reason": (status.get("data") or {}).get("reason") if status["ok"] else None,
-            "current_task": current_task,
+            "control_server_available": snapshot["available"],
+            "runner_state": snapshot["runner_state"],
+            "runner_pid": snapshot["pid"],
+            "runner_updated_at": snapshot["runner_updated_at"],
+            "runner_reason": snapshot["runner_reason"],
+            "current_task": snapshot["current_task"],
             "current_task_detail": task_detail,
             "last_session": last_session[0] if last_session else None,
             "tasks": tasks,
             "groups": _group_tasks_casually(tasks),
-            "usage": (usage_result.get("data") or {}).get("usage") if usage_result["ok"] else None,
+            "usage": snapshot["usage"],
             "events": list(reversed((events_result.get("data") or {}).get("events", []))) if events_result["ok"] else [],
             "latest_log": _latest_log_tail(task_detail),
             # Windows Runner Agent (SERVER-RUNNER-DARK-UI): Claude Code
@@ -286,25 +353,26 @@ def automation_page(request: Request):
             # queue/state machine/control API stay here, execution moved to
             # the Owner's own machine. "online" is a plain heartbeat-recency
             # check (control_server.js's isAgentOnline), never inferred.
-            "agents": (status.get("data") or {}).get("agents", []) if status["ok"] else [],
-            "any_agent_online": (status.get("data") or {}).get("any_agent_online", False) if status["ok"] else False,
+            "agents": snapshot["agents"],
+            "any_agent_online": snapshot["any_agent_online"],
+            "return_to": "/automation",
         },
     )
 
 
 @app.post("/automation/runner/{command}")
-def automation_runner_command(command: str, confirm: str = Form(None)):
+def automation_runner_command(command: str, confirm: str = Form(None), return_to: str = Form(None)):
     if command not in _RUNNER_COMMAND_ROUTE_NAMES:
         raise HTTPException(status_code=404, detail="unknown runner command")
     body = {}
     if command in _CONFIRM_REQUIRED_ACTIONS:
         body["confirm"] = confirm in ("true", "on", "1")
     automation_bridge.post_runner_command(command, body)
-    return RedirectResponse(url="/automation", status_code=303)
+    return RedirectResponse(url=_safe_return_to(return_to), status_code=303)
 
 
 @app.post("/automation/tasks/{task_id}/{action}")
-def automation_task_action(task_id: str, action: str, reason: str = Form(None), confirm: str = Form(None)):
+def automation_task_action(task_id: str, action: str, reason: str = Form(None), confirm: str = Form(None), return_to: str = Form(None)):
     if action not in _TASK_ACTION_ROUTE_NAMES:
         raise HTTPException(status_code=404, detail="unknown task action")
     if not automation_bridge.is_safe_task_id(task_id):
@@ -315,7 +383,7 @@ def automation_task_action(task_id: str, action: str, reason: str = Form(None), 
     if action in _CONFIRM_REQUIRED_ACTIONS:
         body["confirm"] = confirm in ("true", "on", "1")
     automation_bridge.post_task_action(task_id, action, body)
-    return RedirectResponse(url="/automation", status_code=303)
+    return RedirectResponse(url=_safe_return_to(return_to), status_code=303)
 
 
 @app.post("/automation/tasks/reorder")
@@ -426,7 +494,7 @@ def skill_detail(request: Request, skill_id: str, version: str):
 @app.post("/projects")
 def submit_project(name: str = Form(...), vision: str = Form("")):
     store.create_project(name.strip(), vision.strip() or None)
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/dashboard", status_code=303)
 
 
 @app.post("/mandate")
@@ -436,7 +504,7 @@ def submit_mandate(mission: str = Form(...), starting_capital: float = Form(...)
     mission, the starting capital, and the risk policy as a single
     package.' Each submission is a new version, never an overwrite."""
     store.create_mandate(mission.strip(), starting_capital, risk_policy.strip())
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/dashboard", status_code=303)
 
 
 @app.post("/proposals/{proposal_id}/approve")
@@ -455,7 +523,7 @@ def approve_proposal(proposal_id: int):
     store.update_proposal_status(proposal_id, "approved")
     store.update_task_status(proposal["task_id"], "gap_approved")
     store.create_employee_provisioning_task(proposal_id, proposal["task_id"], permissions=proposal.get("permissions"))
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/dashboard", status_code=303)
 
 
 @app.post("/proposals/{proposal_id}/reject")
@@ -477,7 +545,7 @@ def reject_proposal(proposal_id: int):
         input_tokens=proposal["input_tokens"], output_tokens=proposal["output_tokens"], cost=proposal["cost"],
         result_text=None, qa_note=None, terminal_status="gap_rejected", terminal_reason=reason,
     )
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/dashboard", status_code=303)
 
 
 @app.post("/tasks/{task_id}/accept-draft")

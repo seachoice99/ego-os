@@ -336,3 +336,199 @@ def test_static_theme_css_requires_auth_and_serves_css(app_client, owner_credent
 def test_static_route_rejects_path_traversal(app_client, owner_credentials, bad_path):
     res = app_client.get(f"/static/{bad_path}", auth=owner_credentials)
     assert res.status_code == 404
+
+
+# --- Command (/) and Dashboard (/dashboard) redesign (UI-only) -------------
+# / is a chat-first Command surface (submits a ProductTask, not a live
+# conversation); /dashboard is the single operational page. Both reuse
+# ego_os.automation_bridge through main._runner_snapshot() -- never a new
+# POST, never a new external call, never a state change of their own.
+
+def test_command_page_requires_owner_auth(app_client, fake_bridge):
+    assert app_client.get("/").status_code == 401
+
+
+def test_dashboard_page_requires_owner_auth(app_client, fake_bridge):
+    assert app_client.get("/dashboard").status_code == 401
+
+
+def test_command_page_returns_200_when_control_server_unavailable(app_client, owner_credentials, fake_bridge):
+    fake_bridge.state["status"] = {"ok": False, "status_code": None, "data": None, "error": "connection refused"}
+    res = app_client.get("/", auth=owner_credentials)
+    assert res.status_code == 200
+    assert "недоступен" in res.text
+
+
+def test_dashboard_page_returns_200_when_control_server_unavailable(app_client, owner_credentials, fake_bridge):
+    fake_bridge.state["status"] = {"ok": False, "status_code": None, "data": None, "error": "connection refused"}
+    fake_bridge.state["tasks"] = {"ok": False, "status_code": None, "data": None}
+    fake_bridge.state["events"] = {"ok": False, "status_code": None, "data": None}
+    res = app_client.get("/dashboard", auth=owner_credentials)
+    assert res.status_code == 200
+    assert "недоступен" in res.text
+
+
+def test_command_page_renders_compact_runner_state_spend_and_task_form(app_client, owner_credentials, fake_bridge):
+    res = app_client.get("/", auth=owner_credentials)
+    assert res.status_code == 200
+    # compact runner state (from the default fake_bridge status: idle)
+    assert "idle" in res.text
+    # honest spend label, never framed as a remaining budget
+    assert "0.0000" in res.text
+    assert "Отправить задачу" in res.text
+    # not a fake live chat
+    assert "не живой чат" in res.text
+
+
+def test_command_page_does_not_render_administrative_surfaces(app_client, owner_credentials, fake_bridge):
+    """Mandate, the projects table/create-project form, and employee
+    proposals moved to /dashboard -- the Command page keeps only the
+    project <select> needed to submit a task."""
+    res = app_client.get("/", auth=owner_credentials)
+    assert "Risk policy" not in res.text
+    assert "Создать проект" not in res.text
+
+
+def test_command_page_shows_last_product_task_with_report_link(app_client, owner_credentials, fake_bridge):
+    from ego_os import store
+
+    project_id = store.ensure_default_project()
+    task_id = store.create_task("do the thing", project_id)
+    res = app_client.get("/", auth=owner_credentials)
+    assert res.status_code == 200
+    assert "do the thing" in res.text
+    assert f"/tasks/{task_id}" in res.text
+
+
+def test_dashboard_renders_runner_summary_usage_queue_and_company_data(app_client, owner_credentials, fake_bridge):
+    from ego_os import store
+
+    store.create_mandate("Build things", 100.0, "no gambling")
+    fake_bridge.state["tasks"] = {"ok": True, "status_code": 200, "data": {"tasks": [
+        {
+            "id": "MED-01", "title": "Some automation task",
+            "display_summary": "short summary", "group_key": "g", "group_name": "Group",
+            "group_casual_summary": "s", "priority": "P1", "status": "ready", "release": "no_deploy",
+            "owner_approved": False, "blocked_reason": None, "sessions_count": 0,
+        },
+    ]}}
+    res = app_client.get("/dashboard", auth=owner_credentials)
+    assert res.status_code == 200
+    assert "Приоритетные операции" in res.text  # runner summary
+    assert "Лимиты" in res.text  # usage section
+    assert "Group" in res.text  # queue (grouped)
+    assert "Build things" in res.text  # mandate (company data)
+    assert "Готовы (ready)" in res.text and ">1<" in res.text  # ready_count
+
+
+def test_dashboard_shows_full_technical_view_link_to_automation(app_client, owner_credentials, fake_bridge):
+    res = app_client.get("/dashboard", auth=owner_credentials)
+    assert '/automation' in res.text
+
+
+def test_emergency_stop_confirm_dialog_present_on_command_and_dashboard(app_client, owner_credentials, fake_bridge):
+    for path in ("/", "/dashboard"):
+        res = app_client.get(path, auth=owner_credentials)
+        assert "confirm(" in res.text
+        assert "Экстренная остановка" in res.text
+
+
+def test_command_and_dashboard_never_render_known_secret_shapes(app_client, owner_credentials, fake_bridge, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-should-never-appear-in-html")
+    for path in ("/", "/dashboard"):
+        res = app_client.get(path, auth=owner_credentials)
+        assert "sk-or-v1-should-never-appear-in-html" not in res.text
+        assert "OWNER_PASSWORD" not in res.text
+
+
+# --- redirect-target allowlist (return_to) ----------------------------------
+
+def test_runner_command_redirects_to_allowlisted_return_to(app_client, owner_credentials, csrf_headers, fake_bridge):
+    res = app_client.post(
+        "/automation/runner/start", auth=owner_credentials, headers=csrf_headers,
+        data={"return_to": "/dashboard"}, follow_redirects=False,
+    )
+    assert res.status_code == 303
+    assert res.headers["location"] == "/dashboard"
+
+
+def test_runner_command_return_to_command_page(app_client, owner_credentials, csrf_headers, fake_bridge):
+    res = app_client.post(
+        "/automation/runner/start", auth=owner_credentials, headers=csrf_headers,
+        data={"return_to": "/"}, follow_redirects=False,
+    )
+    assert res.status_code == 303
+    assert res.headers["location"] == "/"
+
+
+@pytest.mark.parametrize("bad_return_to", [
+    "https://evil.example/steal", "//evil.example", "/tasks", "/../etc/passwd", "javascript:alert(1)", "",
+])
+def test_runner_command_rejects_non_allowlisted_return_to_and_falls_back_to_automation(
+    app_client, owner_credentials, csrf_headers, fake_bridge, bad_return_to,
+):
+    res = app_client.post(
+        "/automation/runner/start", auth=owner_credentials, headers=csrf_headers,
+        data={"return_to": bad_return_to}, follow_redirects=False,
+    )
+    assert res.status_code == 303
+    assert res.headers["location"] == "/automation"
+
+
+def test_runner_command_with_no_return_to_falls_back_to_automation(app_client, owner_credentials, csrf_headers, fake_bridge):
+    res = app_client.post(
+        "/automation/runner/start", auth=owner_credentials, headers=csrf_headers,
+        follow_redirects=False,
+    )
+    assert res.status_code == 303
+    assert res.headers["location"] == "/automation"
+
+
+def test_task_action_redirects_to_allowlisted_return_to(app_client, owner_credentials, csrf_headers, fake_bridge):
+    res = app_client.post(
+        "/automation/tasks/DA-03/hold", auth=owner_credentials, headers=csrf_headers,
+        data={"return_to": "/dashboard"}, follow_redirects=False,
+    )
+    assert res.status_code == 303
+    assert res.headers["location"] == "/dashboard"
+
+
+def test_task_action_rejects_non_allowlisted_return_to(app_client, owner_credentials, csrf_headers, fake_bridge):
+    res = app_client.post(
+        "/automation/tasks/DA-03/hold", auth=owner_credentials, headers=csrf_headers,
+        data={"return_to": "https://evil.example/"}, follow_redirects=False,
+    )
+    assert res.status_code == 303
+    assert res.headers["location"] == "/automation"
+
+
+def test_return_to_does_not_change_what_is_forwarded_to_the_bridge(app_client, owner_credentials, csrf_headers, fake_bridge):
+    """return_to only selects the redirect target -- it must never leak into
+    the command/action body sent to automation_bridge."""
+    app_client.post(
+        "/automation/runner/pause", auth=owner_credentials, headers=csrf_headers,
+        data={"return_to": "/dashboard"},
+    )
+    assert fake_bridge.calls["runner_commands"] == [("pause", {})]
+
+
+# --- mandate/project/proposal forms now live on /dashboard ------------------
+
+def test_mandate_submission_redirects_to_dashboard(app_client, owner_credentials, csrf_headers, temp_env):
+    res = app_client.post(
+        "/mandate", auth=owner_credentials, headers=csrf_headers,
+        data={"mission": "m", "starting_capital": "10.0", "risk_policy": "r"},
+        follow_redirects=False,
+    )
+    assert res.status_code == 303
+    assert res.headers["location"] == "/dashboard"
+
+
+def test_project_submission_redirects_to_dashboard(app_client, owner_credentials, csrf_headers, temp_env):
+    res = app_client.post(
+        "/projects", auth=owner_credentials, headers=csrf_headers,
+        data={"name": "New Project", "vision": ""},
+        follow_redirects=False,
+    )
+    assert res.status_code == 303
+    assert res.headers["location"] == "/dashboard"

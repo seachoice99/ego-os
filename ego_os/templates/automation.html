@@ -5,65 +5,15 @@
   <title>Ego OS — Автоматизация</title>
   <link rel="stylesheet" href="/static/theme.css">
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
+    /* Layout that stays specific to this page -- every shared component
+       class (queue-groups, usage-card, runner-bar, kv, events-list,
+       log-view, etc.) now lives in theme.css, reused by dashboard.html. */
+    body { max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
     h1 { margin-bottom: 0.2rem; }
-    .subtitle { color: var(--muted); margin-top: 0; }
-    section { margin-top: 1.5rem; border-radius: 10px; padding: 1.2rem 1.4rem; }
-    section h2 { margin-top: 0; font-size: 1.05rem; }
-    a { text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--card-border); vertical-align: top; }
-
-    .unavailable-banner { background: rgba(242,184,75,0.12); border: 1px solid var(--waiting); color: var(--waiting); padding: 0.8rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
-
-    .runner-bar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
-    .runner-badge { font-weight: 700; padding: 0.3rem 0.9rem; border-radius: 999px; font-size: 0.9rem; }
-    .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-    .actions form { display: inline; }
-    button { padding: 0.45rem 1rem; font-size: 0.9rem; cursor: pointer; border-radius: 6px; }
-    button.danger { background: var(--danger); color: #2b0000; border: none; font-weight: 700; }
-    button.small { padding: 0.25rem 0.6rem; font-size: 0.8rem; }
-
-    dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 0.4rem 1rem; margin: 0.6rem 0 0; }
-    dl.kv dt { color: var(--muted); }
-    dl.kv dd { margin: 0; }
-
-    .row-actions { display: flex; gap: 0.35rem; flex-wrap: wrap; }
-    .row-actions input[type=text] { width: 90px; font-size: 0.75rem; padding: 0.2rem 0.4rem; }
-
-    #log-view {
-      background: #0f1115; border: 1px solid var(--card-border); border-radius: 8px;
-      padding: 0.9rem; max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word;
-      font-family: "Cascadia Code", Consolas, monospace; font-size: 0.78rem;
-    }
-    .events-list { max-height: 260px; overflow: auto; font-size: 0.85rem; }
-    .event-row { padding: 0.35rem 0; border-bottom: 1px solid var(--card-border); }
-    .event-row .ts { color: var(--muted); margin-right: 0.5rem; }
-
-    /* casual grouped queue cards */
-    .queue-groups { display: flex; flex-direction: column; gap: 10px; }
-    .group-card { background: var(--card-bg-alt); border: 1px solid var(--card-border); border-radius: 8px; padding: 12px 14px; cursor: grab; }
-    .group-card.drag-over { border-color: var(--link); box-shadow: 0 0 0 1px var(--link) inset; }
-    .group-card-attention { border-color: var(--danger); }
-    .group-card-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-    .drag-handle { color: var(--muted); font-size: 16px; cursor: grab; user-select: none; }
-    .group-card-title { flex: 1; min-width: 200px; }
-    .group-name { font-weight: 700; }
-    .group-card-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .group-card-body { margin-top: 12px; border-top: 1px solid var(--card-border); padding-top: 10px; cursor: default; }
-    .group-card-body.hidden { display: none; }
-    .task-row[draggable="true"] { cursor: grab; }
-    .task-row.drag-over { outline: 2px solid var(--link); outline-offset: -2px; }
-
-    /* limits panel */
-    .usage-executors { display: flex; flex-direction: column; gap: 10px; }
-    .usage-card { background: var(--card-bg-alt); border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 12px; }
-    .usage-title { font-weight: 700; margin-bottom: 4px; }
   </style>
 </head>
 <body>
-  <p><a href="/dashboard">&larr; к Dashboard</a> &middot; <a href="/">Command</a></p>
+  <p><a href="/dashboard">&larr; к Dashboard</a> &middot; <a href="/">Command</a> &middot; <span class="subtitle">Полный технический вид</span></p>
   <h1>Автоматизация</h1>
   <p class="subtitle">Управление autonomous task runner &mdash; читает и командует через уже существующий control server (127.0.0.1, не публичный порт, физически на этой же машине).</p>
 
@@ -106,11 +56,12 @@
         {% if runner_reason %} &middot; причина: {{ runner_reason }}{% endif %}
       </span>
       <div class="actions">
-        <form method="post" action="/automation/runner/start"><button title="Если агент на паузе — снимет паузу на следующем heartbeat. Не запускает ничего на сервере (Claude Code здесь не выполняется).">Старт</button></form>
-        <form method="post" action="/automation/runner/pause"><button title="Не убьёт текущий процесс — дождётся безопасной точки (после теста/commit/push) и только тогда поставит на паузу. Команда доходит до агента на следующем heartbeat (обычно до ~10 секунд).">Пауза</button></form>
-        <form method="post" action="/automation/runner/resume"><button title="Агент проверит Git и отсутствие зависших процессов, продолжит с последней сохранённой точки в НОВОЙ сессии">Продолжить</button></form>
-        <form method="post" action="/automation/runner/stop-after-stage"><button title="Даст текущему этапу закончиться, сохранит handoff, не начнёт следующий этап">Остановить после этапа</button></form>
+        <form method="post" action="/automation/runner/start"><input type="hidden" name="return_to" value="{{ return_to }}"><button title="Если агент на паузе — снимет паузу на следующем heartbeat. Не запускает ничего на сервере (Claude Code здесь не выполняется).">Старт</button></form>
+        <form method="post" action="/automation/runner/pause"><input type="hidden" name="return_to" value="{{ return_to }}"><button title="Не убьёт текущий процесс — дождётся безопасной точки (после теста/commit/push) и только тогда поставит на паузу. Команда доходит до агента на следующем heartbeat (обычно до ~10 секунд).">Пауза</button></form>
+        <form method="post" action="/automation/runner/resume"><input type="hidden" name="return_to" value="{{ return_to }}"><button title="Агент проверит Git и отсутствие зависших процессов, продолжит с последней сохранённой точки в НОВОЙ сессии">Продолжить</button></form>
+        <form method="post" action="/automation/runner/stop-after-stage"><input type="hidden" name="return_to" value="{{ return_to }}"><button title="Даст текущему этапу закончиться, сохранит handoff, не начнёт следующий этап">Остановить после этапа</button></form>
         <form method="post" action="/automation/runner/emergency-stop" onsubmit="return confirm('Экстренная остановка немедленно прервёт текущий процесс Claude на вашем компьютере. Файлы не удаляются, Git не откатывается, но задача будет помечена interrupted и потребует проверки перед следующим запуском. Продолжить?');">
+          <input type="hidden" name="return_to" value="{{ return_to }}">
           <input type="hidden" name="confirm" value="true">
           <button class="danger" title="Требует подтверждения. Прерывает процесс немедленно (в пределах ~10 секунд, пока агент опрашивает сервер).">Экстренная остановка</button>
         </form>
@@ -213,6 +164,7 @@
           </div>
         </div>
         <div class="group-card-body hidden" data-group-body="{{ g.key }}">
+          <div class="table-scroll">
           <table>
             <tr><th>ID</th><th>Название</th><th>Приоритет</th><th>Статус</th><th>Release</th><th>Owner</th><th>Причина блокировки</th><th>Действия</th></tr>
             {% for t in g.tasks %}
@@ -226,19 +178,21 @@
               <td>{{ t.blocked_reason or "—" }}</td>
               <td class="row-actions">
                 {% if t.status == "ready" %}
-                <form method="post" action="/automation/tasks/{{ t.id }}/hold"><button class="small">Отложить</button></form>
+                <form method="post" action="/automation/tasks/{{ t.id }}/hold"><input type="hidden" name="return_to" value="{{ return_to }}"><button class="small">Отложить</button></form>
                 {% endif %}
                 {% if t.status == "held" %}
-                <form method="post" action="/automation/tasks/{{ t.id }}/unhold"><button class="small">Вернуть</button></form>
+                <form method="post" action="/automation/tasks/{{ t.id }}/unhold"><input type="hidden" name="return_to" value="{{ return_to }}"><button class="small">Вернуть</button></form>
                 {% endif %}
                 {% if t.status in ("failed", "waiting_for_auth", "interrupted") %}
                 <form method="post" action="/automation/tasks/{{ t.id }}/retry" onsubmit="return confirm('Повторить задачу {{ t.id }}?');">
+                  <input type="hidden" name="return_to" value="{{ return_to }}">
                   <input type="hidden" name="confirm" value="true">
                   <button class="small">Повторить</button>
                 </form>
                 {% endif %}
                 {% if t.status in ("ready", "held", "blocked", "waiting_for_limit", "waiting_for_auth") %}
                 <form method="post" action="/automation/tasks/{{ t.id }}/skip" onsubmit="return confirm('Пропустить задачу {{ t.id }}? Это действие требует причины.');">
+                  <input type="hidden" name="return_to" value="{{ return_to }}">
                   <input type="hidden" name="confirm" value="true">
                   <input type="text" name="reason" placeholder="причина" required>
                   <button class="small">Пропустить</button>
@@ -248,6 +202,7 @@
             </tr>
             {% endfor %}
           </table>
+          </div>
         </div>
       </div>
       {% endfor %}

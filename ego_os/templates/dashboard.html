@@ -1,72 +1,343 @@
 <!doctype html>
-<html>
+<html lang="ru">
 <head>
   <meta charset="utf-8">
   <title>Ego OS — Dashboard</title>
   <link rel="stylesheet" href="/static/theme.css">
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
-    h1 { margin-bottom: 0.2rem; }
-    .subtitle { color: var(--muted); margin-top: 0; }
-    section { margin-top: 2rem; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--card-border); }
-    a { text-decoration: none; }
-    a:hover { text-decoration: underline; }
-  </style>
 </head>
 <body>
-  <h1>Ego OS</h1>
-  <p class="subtitle">Operations Dashboard &middot; total spend to date: ${{ "%.6f" | format(total_cost) }} &middot; <a href="/assets">Asset Inbox</a> &middot; <a href="/automation">Automation</a> &middot; <a href="/">&larr; Command</a></p>
+  <div class="dashboard-page">
+    <div class="dashboard-header">
+      <h1>Ego OS &middot; Dashboard</h1>
+      <div class="dashboard-header-links">
+        <a href="/">&larr; Command</a>
+        <span>Общий spend: <strong style="color:var(--text);">${{ "%.6f" | format(total_cost) }}</strong></span>
+        <a href="/assets">Assets</a>
+        <a href="/skills">Skills</a>
+      </div>
+    </div>
 
-  <section>
-    <h2>Employees</h2>
-    <table>
-      <tr><th>Name</th><th>Title</th><th>Department</th><th>Status</th><th></th></tr>
-      {% for e in employees %}
-      <tr>
-        <td>{{ e.name }}</td>
-        <td>{{ e.title }}</td>
-        <td>{{ e.department }}</td>
-        <td class="status-{{ e.status }}">{{ e.status }}</td>
-        <td><a href="/employees/{{ e.id }}">history</a></td>
-      </tr>
-      {% endfor %}
-    </table>
-  </section>
-
-  <section>
-    <h2>Projects</h2>
-    <table>
-      <tr><th>Name</th><th>Vision</th><th></th></tr>
-      {% for p in projects %}
-      <tr>
-        <td>{{ p.name }}</td>
-        <td>{{ p.vision or '' }}</td>
-        <td><a href="/projects/{{ p.id }}/memory">memory</a></td>
-      </tr>
-      {% endfor %}
-    </table>
-  </section>
-
-  <section>
-    <h2>Tasks</h2>
-    {% if tasks %}
-    <table>
-      <tr><th>ID</th><th>Project</th><th>Request</th><th>Status</th><th></th></tr>
-      {% for t in tasks %}
-      <tr>
-        <td>{{ t.id }}</td>
-        <td>{{ t.project_name or '' }}</td>
-        <td>{{ t.request_text }}</td>
-        <td class="status-{{ t.status }}">{{ t.status }}</td>
-        <td><a href="/tasks/{{ t.id }}">view report</a></td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% else %}
-    <p>No tasks submitted yet.</p>
+    {% if not runner.available %}
+    <div class="unavailable-banner">
+      Control server (очередь и координация раннера) недоступен. Технические операции ниже будут показывать честное «недоступно» вместо ошибки.
+    </div>
+    {% elif not runner.any_agent_online %}
+    <div class="unavailable-banner">
+      Windows Runner Agent сейчас offline — задачи не будут забраны, пока агент не подключится.
+    </div>
     {% endif %}
-  </section>
+
+    <!-- ============ 1. Priority operations ============ -->
+    <section class="section-block">
+      <h2>Приоритетные операции</h2>
+      <div class="priority-grid">
+        <div class="stat-tile">
+          <div class="label">Runner state</div>
+          <div class="value status-{{ runner.runner_state or 'unknown' }}">{{ runner.runner_state or 'неизвестно' }}</div>
+        </div>
+        <div class="stat-tile">
+          <div class="label">Windows Agent</div>
+          <div class="value {{ 'status-success' if runner.any_agent_online else 'status-unknown' }}">{{ 'online' if runner.any_agent_online else 'offline' }}</div>
+        </div>
+        <div class="stat-tile">
+          <div class="label">Активная AutomationTask</div>
+          <div class="value">{{ runner.current_task.id if runner.current_task else '—' }}</div>
+        </div>
+        <div class="stat-tile">
+          <div class="label">Причина (reason)</div>
+          <div class="value" style="font-weight:400; font-size:0.9rem;">{{ runner.runner_reason or '—' }}</div>
+        </div>
+      </div>
+
+      {% if runner.current_task %}
+      <dl class="kv">
+        <dt>ID</dt><dd><strong>{{ runner.current_task.id }}</strong> &mdash; {{ runner.current_task.display_summary or runner.current_task.title }}</dd>
+        <dt>Статус</dt><dd><span class="status-{{ runner.current_task.status }}">{{ runner.current_task.status }}</span></dd>
+        <dt>Модель</dt><dd>{{ last_session.model if last_session else "—" }}</dd>
+        <dt>Стадий выполнено</dt><dd>{{ runner.current_task.sessions_count }}</dd>
+      </dl>
+      {% endif %}
+
+      <h3 style="margin:1.1rem 0 0.4rem; font-size:0.9rem; color:var(--muted);">Лимиты</h3>
+      <div class="usage-executors">
+        {% for label, key in [("Claude", "claude"), ("Codex", "codex")] %}
+        {% set u = runner.usage[key] if runner.usage else None %}
+        {% set rl = u.rate_limits if u and u.rate_limits else None %}
+        <div class="usage-card">
+          <div class="usage-title">{{ label }}</div>
+          {% if not u or (not u.total_sessions and not rl) %}
+          <p class="subtitle" style="margin:0;">Нет данных — сессий ещё не было.</p>
+          {% else %}
+          <dl class="kv">
+            {% if rl %}
+            <dt>Статус лимитов</dt><dd>{{ rl.status }}{% if rl.error %} ({{ rl.error }}){% endif %}</dd>
+            {% if rl.primary and rl.primary.remaining_percent is not none %}
+            <dt>5ч окно</dt><dd>{{ rl.primary.remaining_percent }}% remaining{% if rl.primary.resets_at %}, сброс {{ rl.primary.resets_at }}{% endif %}</dd>
+            {% endif %}
+            {% if rl.secondary and rl.secondary.remaining_percent is not none %}
+            <dt>Недельное окно</dt><dd>{{ rl.secondary.remaining_percent }}% remaining{% if rl.secondary.resets_at %}, сброс {{ rl.secondary.resets_at }}{% endif %}</dd>
+            {% endif %}
+            <dt>Проверено</dt><dd>{{ rl.checked_at }}</dd>
+            {% endif %}
+            {% if u.total_sessions %}
+            <dt>Сессий всего</dt><dd>{{ u.total_sessions }}</dd>
+            <dt>Стоимость всего</dt><dd>${{ "%.4f"|format(u.total_cost_usd) }}</dd>
+            {% endif %}
+          </dl>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+
+      <h3 style="margin:1.1rem 0 0.4rem; font-size:0.9rem; color:var(--muted);">Управление runner</h3>
+      <div class="runner-bar">
+        <div class="actions">
+          <form method="post" action="/automation/runner/start"><input type="hidden" name="return_to" value="{{ return_to }}"><button title="Снять с паузы / запустить">Старт</button></form>
+          <form method="post" action="/automation/runner/pause"><input type="hidden" name="return_to" value="{{ return_to }}"><button title="Пауза на следующей безопасной точке">Пауза</button></form>
+          <form method="post" action="/automation/runner/resume"><input type="hidden" name="return_to" value="{{ return_to }}"><button title="Продолжить с последней сохранённой точки">Продолжить</button></form>
+          <form method="post" action="/automation/runner/stop-after-stage"><input type="hidden" name="return_to" value="{{ return_to }}"><button title="Остановить после текущего этапа">Остановить после этапа</button></form>
+          <form method="post" action="/automation/runner/emergency-stop" onsubmit="return confirm('Экстренная остановка немедленно прервёт текущий процесс Claude на вашем компьютере. Продолжить?');">
+            <input type="hidden" name="return_to" value="{{ return_to }}">
+            <input type="hidden" name="confirm" value="true">
+            <button class="danger" title="Требует подтверждения. Прерывает немедленно.">Экстренная остановка</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 2. Queue ============ -->
+    <section class="section-block">
+      <h2>Очередь</h2>
+      <div class="priority-grid" style="margin-bottom:0.6rem;">
+        <div class="stat-tile"><div class="label">Готовы (ready)</div><div class="value">{{ ready_count }}</div></div>
+        <div class="stat-tile"><div class="label">Требуют внимания</div><div class="value {{ 'status-danger' if attention_count else '' }}">{{ attention_count }}</div></div>
+      </div>
+      <p class="subtitle" style="margin:0 0 0.8rem;">
+        Карточки — крупные инициативы; перетащите карточку, чтобы поменять приоритет. Разверните карточку, чтобы увидеть и
+        переупорядочить отдельные задачи внутри неё.
+      </p>
+      {% if groups %}
+      <div id="queue-groups" class="queue-groups">
+        {% for g in groups %}
+        <div class="group-card{% if g.needs_attention %} group-card-attention{% endif %}" draggable="true" data-group-card="{{ g.key }}">
+          <div class="group-card-header">
+            <span class="drag-handle" title="Перетащите, чтобы изменить приоритет">&#10495;</span>
+            <div class="group-card-title">
+              <div class="group-name">{{ g.name }}</div>
+              <div class="subtitle" style="margin:0;">{{ g.casual_summary }}</div>
+            </div>
+            <div class="group-card-meta">
+              {% if g.needs_attention %}<span class="status-danger">нужно ваше внимание</span>{% endif %}
+              <span class="subtitle" style="margin:0;">{{ g.done_count }}/{{ g.total_count }} выполнено</span>
+              <button type="button" class="small toggle-group" data-toggle-group="{{ g.key }}">Технический список</button>
+            </div>
+          </div>
+          <div class="group-card-body hidden" data-group-body="{{ g.key }}">
+            <div class="table-scroll">
+            <table>
+              <tr><th>ID</th><th>Название</th><th>Приоритет</th><th>Статус</th><th>Release</th><th>Owner</th><th>Причина блокировки</th><th>Действия</th></tr>
+              {% for t in g.tasks %}
+              <tr class="task-row" draggable="{{ 'true' if t.status == 'ready' else 'false' }}" data-row-id="{{ t.id }}" data-group="{{ g.key }}">
+                <td>{{ t.id }}</td>
+                <td>{{ t.title }}</td>
+                <td>{{ t.priority }}</td>
+                <td><span class="status-{{ t.status }}">{{ t.status }}</span></td>
+                <td>{{ t.release }}</td>
+                <td>{{ "да" if t.owner_approved else "нет" }}</td>
+                <td>{{ t.blocked_reason or "—" }}</td>
+                <td class="row-actions">
+                  {% if t.status == "ready" %}
+                  <form method="post" action="/automation/tasks/{{ t.id }}/hold"><input type="hidden" name="return_to" value="{{ return_to }}"><button class="small">Отложить</button></form>
+                  {% endif %}
+                  {% if t.status == "held" %}
+                  <form method="post" action="/automation/tasks/{{ t.id }}/unhold"><input type="hidden" name="return_to" value="{{ return_to }}"><button class="small">Вернуть</button></form>
+                  {% endif %}
+                  {% if t.status in ("failed", "waiting_for_auth", "interrupted") %}
+                  <form method="post" action="/automation/tasks/{{ t.id }}/retry" onsubmit="return confirm('Повторить задачу {{ t.id }}?');">
+                    <input type="hidden" name="return_to" value="{{ return_to }}">
+                    <input type="hidden" name="confirm" value="true">
+                    <button class="small">Повторить</button>
+                  </form>
+                  {% endif %}
+                  {% if t.status in ("ready", "held", "blocked", "waiting_for_limit", "waiting_for_auth") %}
+                  <form method="post" action="/automation/tasks/{{ t.id }}/skip" onsubmit="return confirm('Пропустить задачу {{ t.id }}? Это действие требует причины.');">
+                    <input type="hidden" name="return_to" value="{{ return_to }}">
+                    <input type="hidden" name="confirm" value="true">
+                    <input type="text" name="reason" placeholder="причина" required>
+                    <button class="small">Пропустить</button>
+                  </form>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </table>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p>Очередь пуста или control server недоступен.</p>
+      {% endif %}
+    </section>
+
+    <!-- ============ 3. Company operations ============ -->
+    <section class="section-block">
+      <h2>Компания</h2>
+      <div class="company-grid">
+        <div class="company-card">
+          <h3>ProductTask</h3>
+          {% if product_tasks %}
+          <div class="table-scroll">
+          <table>
+            <tr><th>ID</th><th>Проект</th><th>Запрос</th><th>Статус</th><th></th></tr>
+            {% for t in product_tasks %}
+            <tr>
+              <td>{{ t.id }}</td>
+              <td>{{ t.project_name or '' }}</td>
+              <td>{{ t.request_text }}</td>
+              <td class="status-{{ t.status }}">{{ t.status }}</td>
+              <td><a href="/tasks/{{ t.id }}">отчёт</a></td>
+            </tr>
+            {% endfor %}
+          </table>
+          </div>
+          {% else %}
+          <p class="subtitle">Задач ещё не было.</p>
+          {% endif %}
+        </div>
+
+        <div class="company-card">
+          <h3>Employees</h3>
+          <div class="table-scroll">
+          <table>
+            <tr><th>Name</th><th>Title</th><th>Dept</th><th>Status</th><th></th></tr>
+            {% for e in employees %}
+            <tr>
+              <td>{{ e.name }}</td>
+              <td>{{ e.title }}</td>
+              <td>{{ e.department }}</td>
+              <td class="status-{{ e.status }}">{{ e.status }}</td>
+              <td><a href="/employees/{{ e.id }}">history</a></td>
+            </tr>
+            {% endfor %}
+          </table>
+          </div>
+        </div>
+
+        <div class="company-card">
+          <h3>Projects</h3>
+          <div class="table-scroll">
+          <table>
+            <tr><th>Name</th><th>Vision</th><th></th></tr>
+            {% for p in projects %}
+            <tr>
+              <td>{{ p.name }}</td>
+              <td>{{ p.vision or '' }}</td>
+              <td><a href="/projects/{{ p.id }}/memory">memory</a></td>
+            </tr>
+            {% endfor %}
+          </table>
+          </div>
+          <form method="post" action="/projects" style="margin-top: 0.8rem;">
+            <input type="text" name="name" placeholder="Новый проект" required>
+            <input type="text" name="vision" placeholder="Vision (опционально)">
+            <button type="submit">Создать проект</button>
+          </form>
+        </div>
+
+        <div class="company-card">
+          <h3>Mandate</h3>
+          {% if mandate %}
+          <div class="mandate-box">
+            <div class="label">Mission (v{{ mandate.version }})</div>
+            <p style="margin:0.2rem 0;">{{ mandate.mission }}</p>
+            <div class="label">Starting capital</div>
+            <p style="margin:0.2rem 0;">${{ "%.2f" | format(mandate.starting_capital) }}</p>
+            <div class="label">Risk policy</div>
+            <p style="margin:0.2rem 0;">{{ mandate.risk_policy }}</p>
+          </div>
+          {% else %}
+          <p class="subtitle">Mandate ещё не утверждён.</p>
+          {% endif %}
+          <form method="post" action="/mandate" style="margin-top:0.6rem;">
+            <label style="font-size:0.8rem; color:var(--muted);">Mission</label><br>
+            <textarea name="mission" rows="2" required>{{ mandate.mission if mandate else '' }}</textarea><br>
+            <label style="font-size:0.8rem; color:var(--muted);">Starting capital (USD)</label><br>
+            <input type="number" step="0.01" name="starting_capital" value="{{ mandate.starting_capital if mandate else '' }}" required><br>
+            <label style="font-size:0.8rem; color:var(--muted);">Risk policy</label><br>
+            <textarea name="risk_policy" rows="2" required>{{ mandate.risk_policy if mandate else '' }}</textarea><br>
+            <button type="submit" style="margin-top:0.4rem;">{{ 'Обновить mandate' if mandate else 'Утвердить mandate' }}</button>
+          </form>
+        </div>
+      </div>
+
+      {% if proposals %}
+      <h3 style="margin:1.3rem 0 0.5rem;">Pending Employee Creation Proposals</h3>
+      {% for p in proposals %}
+      <div class="proposal">
+        <h3>{{ p.title }} <span style="font-weight:400;color:var(--muted);">&middot; {{ p.department }}</span></h3>
+        <dl>
+          <dt>Trigger</dt><dd>{{ p.trigger_text }}</dd>
+          <dt>Mission</dt><dd>{{ p.mission }}</dd>
+          <dt>Responsibilities</dt><dd>{{ p.responsibilities | join(', ') }}</dd>
+          <dt>Required capabilities</dt><dd>{{ p.required_capabilities | join(', ') }}</dd>
+          <dt>Tools</dt><dd>{{ p.tools | join(', ') }}</dd>
+          <dt>Permissions</dt><dd>{{ p.permissions | join(', ') }}</dd>
+          <dt>Reporting rules</dt><dd>{{ p.reporting_rules | join(', ') }}</dd>
+          <dt>Temporary or permanent</dt><dd>{{ p.temporary_or_permanent }}</dd>
+          <dt>Reason</dt><dd>{{ p.reason }}</dd>
+        </dl>
+        <div class="proposal-actions">
+          <form method="post" action="/proposals/{{ p.id }}/approve">
+            <button type="submit" class="btn-approve">Approve</button>
+          </form>
+          <form method="post" action="/proposals/{{ p.id }}/reject">
+            <button type="submit" class="btn-reject">Reject</button>
+          </form>
+          <a href="/tasks/{{ p.task_id }}" style="align-self:center;">view triggering task</a>
+        </div>
+      </div>
+      {% endfor %}
+      {% endif %}
+    </section>
+
+    <!-- ============ 4. Secondary: recent events + log tail ============ -->
+    <details class="collapsible">
+      <summary>Последние события runner ({{ events|length }})</summary>
+      <section class="section-block">
+        <div class="events-list">
+          {% for e in events %}
+          <div class="event-row">
+            <span class="ts">{{ e.ts }}</span>
+            <strong>{{ e.event }}</strong> {{ e.previous_state }} &rarr; {{ e.new_state }}
+            {% if e.task_id %} &middot; {{ e.task_id }}{% endif %}
+            {% if e.reason %} &middot; {{ e.reason }}{% endif %}
+          </div>
+          {% else %}
+          <p>Событий пока нет.</p>
+          {% endfor %}
+        </div>
+      </section>
+    </details>
+
+    <details class="collapsible">
+      <summary>Технический лог последней сессии</summary>
+      <section class="section-block">
+        {% if latest_log %}
+        <p class="subtitle" style="margin:0 0 0.5rem;">{{ latest_log.file }}{% if latest_log.truncated %} (показан хвост){% endif %}</p>
+        <div id="log-view">{{ latest_log.content }}</div>
+        {% else %}
+        <p>Логов пока нет.</p>
+        {% endif %}
+      </section>
+    </details>
+
+    <p class="subtitle" style="margin-top:1.5rem;">
+      <a href="/automation">Полный технический вид (/automation) &rarr;</a>
+    </p>
+  </div>
+
+  <script src="/static/automation.js"></script>
 </body>
 </html>

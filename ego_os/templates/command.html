@@ -1,153 +1,132 @@
 <!doctype html>
-<html>
+<html lang="ru">
 <head>
   <meta charset="utf-8">
   <title>Ego OS — Command</title>
   <link rel="stylesheet" href="/static/theme.css">
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
-    h1 { margin-bottom: 0.2rem; }
-    .subtitle { color: var(--muted); margin-top: 0; }
-    section { margin-top: 2rem; border: 1px solid var(--card-border); border-radius: 10px; padding: 1.2rem 1.4rem; }
-    section h2 { margin-top: 0; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--card-border); vertical-align: top; }
-    textarea { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 1rem; padding: 0.6rem; }
-    input[type=text], input[type=number] { padding: 0.4rem 0.6rem; font-size: 1rem; box-sizing: border-box; }
-    button { margin-top: 0.5rem; padding: 0.5rem 1.2rem; font-size: 1rem; cursor: pointer; display: inline-flex; align-items: center; gap: 0.5rem; }
-    button:disabled { cursor: not-allowed; opacity: 0.85; }
-    a { text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .nav { margin-bottom: 1rem; }
-    .mandate-box { border-radius: 8px; padding: 0.8rem 1rem; margin-bottom: 1rem; }
-    .mandate-box .label { font-size: 0.75rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.03em; }
-    .proposal { border: 1px solid var(--card-border); border-radius: 8px; padding: 0.8rem 1rem; margin-bottom: 0.8rem; }
-    .proposal h3 { margin: 0 0 0.4rem; }
-    .proposal dl { margin: 0.4rem 0; }
-    .proposal dt { font-weight: 600; font-size: 0.85rem; color: var(--muted); margin-top: 0.4rem; }
-    .proposal dd { margin: 0; }
-    .proposal-actions { margin-top: 0.6rem; display: flex; gap: 0.5rem; }
-    .btn-approve { background: var(--success); color: #06231a; border: none; border-radius: 6px; }
-    .btn-reject { background: var(--danger); color: #2b0000; border: none; border-radius: 6px; }
-
-    .spinner { width: 0.9rem; height: 0.9rem; border: 2px solid rgba(255,255,255,0.3); border-top-color: var(--text); border-radius: 50%; display: inline-block; animation: spin 0.7s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .working-note { margin: 0.4rem 0 0; font-size: 0.85rem; color: var(--waiting); display: none; }
-    body.is-loading .working-note { display: block; }
-    body.is-loading::before {
-      content: ""; position: fixed; top: 0; left: 0; height: 3px; width: 100%;
-      background: linear-gradient(90deg, var(--running), #93c5fd, var(--running)); background-size: 200% 100%;
-      animation: loading-bar 1s linear infinite; z-index: 999;
-    }
-    @keyframes loading-bar { from { background-position: 200% 0; } to { background-position: 0 0; } }
-  </style>
 </head>
 <body>
-  <h1>Ego OS</h1>
-  <p class="subtitle">Strategy / Command &middot; <a href="/dashboard">Operations Dashboard &rarr;</a></p>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="sidebar-brand" href="/">Ego OS</a>
 
-  <section>
-    <h2>Mandate</h2>
-    {% if mandate %}
-    <div class="mandate-box">
-      <div class="label">Mission (v{{ mandate.version }})</div>
-      <p>{{ mandate.mission }}</p>
-      <div class="label">Starting capital</div>
-      <p>${{ "%.2f" | format(mandate.starting_capital) }}</p>
-      <div class="label">Risk policy</div>
-      <p>{{ mandate.risk_policy }}</p>
-    </div>
-    <p style="color:var(--muted); font-size:0.85rem;">Submitting below records a new version -- it does not overwrite this one.</p>
-    {% else %}
-    <p style="color:var(--waiting);">No mandate has been approved yet. Per Stage 1 (Formation), the company has no external footprint until the Owner approves a mission, starting capital, and risk policy as a single package.</p>
-    {% endif %}
-    <form method="post" action="/mandate">
-      <label>Mission</label><br>
-      <textarea name="mission" rows="2" placeholder="What is this company's mission?" required>{{ mandate.mission if mandate else '' }}</textarea><br>
-      <label>Starting capital (USD)</label><br>
-      <input type="number" step="0.01" name="starting_capital" value="{{ mandate.starting_capital if mandate else '' }}" required><br>
-      <label>Risk policy</label><br>
-      <textarea name="risk_policy" rows="2" placeholder="What risk is acceptable, and what is not?" required>{{ mandate.risk_policy if mandate else '' }}</textarea><br>
-      <button type="submit">{{ 'Approve updated mandate' if mandate else 'Approve initial mandate' }}</button>
-    </form>
-  </section>
-
-  <section>
-    <h2>Digital Asset Inbox</h2>
-    <p>Review Candidates nominated from delivered Tasks and decide whether to accept them as Digital Assets or reject them (architecture/013).</p>
-    <p><a href="/assets">Open Asset Inbox &rarr;</a></p>
-  </section>
-
-  {% if proposals %}
-  <section>
-    <h2>Pending Employee Creation Proposals</h2>
-    {% for p in proposals %}
-    <div class="proposal">
-      <h3>{{ p.title }} <span style="font-weight:400;color:var(--muted);">&middot; {{ p.department }}</span></h3>
-      <dl>
-        <dt>Trigger</dt><dd>{{ p.trigger_text }}</dd>
-        <dt>Mission</dt><dd>{{ p.mission }}</dd>
-        <dt>Responsibilities</dt><dd>{{ p.responsibilities | join(', ') }}</dd>
-        <dt>Required capabilities</dt><dd>{{ p.required_capabilities | join(', ') }}</dd>
-        <dt>Tools</dt><dd>{{ p.tools | join(', ') }}</dd>
-        <dt>Permissions</dt><dd>{{ p.permissions | join(', ') }}</dd>
-        <dt>Reporting rules</dt><dd>{{ p.reporting_rules | join(', ') }}</dd>
-        <dt>Temporary or permanent</dt><dd>{{ p.temporary_or_permanent }}</dd>
-        <dt>Reason</dt><dd>{{ p.reason }}</dd>
-      </dl>
-      <div class="proposal-actions">
-        <form method="post" action="/proposals/{{ p.id }}/approve">
-          <button type="submit" class="btn-approve">Approve</button>
-        </form>
-        <form method="post" action="/proposals/{{ p.id }}/reject">
-          <button type="submit" class="btn-reject">Reject</button>
-        </form>
-        <a href="/tasks/{{ p.task_id }}" style="align-self:center;">view triggering task</a>
+      <div class="sidebar-block">
+        <a class="sidebar-nav-btn" href="/dashboard">Dashboard</a>
       </div>
-    </div>
-    {% endfor %}
-  </section>
-  {% endif %}
 
-  <section>
-    <h2>Projects</h2>
-    <table>
-      <tr><th>Name</th><th>Vision</th></tr>
-      {% for p in projects %}
-      <tr>
-        <td>{{ p.name }}</td>
-        <td>{{ p.vision or '' }}</td>
-      </tr>
-      {% endfor %}
-    </table>
-    <form method="post" action="/projects" style="margin-top: 0.8rem;">
-      <input type="text" name="name" placeholder="New project name" required>
-      <input type="text" name="vision" placeholder="Vision (optional)" style="width: 40%;">
-      <button type="submit">Create project</button>
-    </form>
-  </section>
+      <div class="sidebar-block">
+        <h3>Runner</h3>
+        <div class="status-line">
+          <span>Control server</span>
+          <strong class="{{ 'status-success' if runner.available else 'status-danger' }}">{{ 'доступен' if runner.available else 'недоступен' }}</strong>
+        </div>
+        {% if runner.available %}
+        <div class="status-line">
+          <span>Состояние</span>
+          <strong class="status-{{ runner.runner_state or 'unknown' }}">{{ runner.runner_state or 'неизвестно' }}</strong>
+        </div>
+        <div class="status-line">
+          <span>Windows Agent</span>
+          <strong class="{{ 'status-success' if runner.any_agent_online else 'status-unknown' }}">{{ 'online' if runner.any_agent_online else 'offline' }}</strong>
+        </div>
+        <div class="status-line">
+          <span>Задача</span>
+          <strong>{{ runner.current_task.id if runner.current_task else 'нет активной' }}</strong>
+        </div>
+        {% endif %}
+      </div>
 
-  <section>
-    <h2>Assign work to the company</h2>
-    <form method="post" action="/tasks" id="task-form" enctype="multipart/form-data">
-      <label for="project-select" style="display: block; margin-bottom: 0.3rem; font-size: 0.9rem; color: var(--muted);">Project</label>
-      <select name="project_id" id="project-select" style="padding: 0.4rem 0.6rem; font-size: 1rem; margin-bottom: 0.6rem;">
-        {% for p in projects %}
-        <option value="{{ p.id }}">{{ p.name }}</option>
+      <div class="sidebar-block">
+        <h3>Потрачено</h3>
+        <div class="status-line status-line-tight">
+          <span>в ProductTask</span>
+          <strong>${{ "%.4f" | format(total_cost) }}</strong>
+        </div>
+      </div>
+
+      <div class="sidebar-block">
+        <h3>Лимиты</h3>
+        {% if not runner.available or not runner.usage %}
+        <p class="subtitle" style="margin:0; font-size:0.82rem;">данные пока недоступны</p>
+        {% else %}
+        {% for label, key in [("Claude", "claude"), ("Codex", "codex")] %}
+        {% set u = runner.usage[key] if runner.usage else None %}
+        {% set rl = u.rate_limits if u and u.rate_limits else None %}
+        <div class="status-line status-line-tight">
+          <span>{{ label }}</span>
+          {% if rl and rl.primary and rl.primary.remaining_percent is not none %}
+          <strong>{{ rl.primary.remaining_percent }}% (5ч)</strong>
+          {% elif u and u.total_sessions %}
+          <strong>{{ u.total_sessions }} сесс.</strong>
+          {% else %}
+          <strong class="subtitle">данные пока недоступны</strong>
+          {% endif %}
+        </div>
         {% endfor %}
-      </select>
-      <textarea name="request_text" id="request-text" rows="3" placeholder="Describe what you'd like the company to do... (you can also drag a .zip/.pdf slide deck onto this box)" required></textarea>
-      <br>
-      <label style="display: block; margin: 0.6rem 0 0.3rem; font-size: 0.85rem; color: var(--muted);">
-        Slide deck (optional — a .zip of PNG/JPG images or a .pdf, only used for Presentation Website requests)
-      </label>
-      <input type="file" name="attachment" id="attachment-input" accept=".zip,.pdf">
-      <span id="attachment-note" style="font-size: 0.8rem; color: var(--success); margin-left: 0.5rem;"></span>
-      <br>
-      <button type="submit" id="submit-btn" style="margin-top: 0.6rem;">Submit</button>
-      <p class="working-note">The company is executing your task — this can take a few seconds while employees draft and review the work.</p>
-    </form>
-  </section>
+        {% endif %}
+      </div>
+
+      <div class="sidebar-block">
+        <h3>Управление runner</h3>
+        <div class="sidebar-controls">
+          <form method="post" action="/automation/runner/start"><input type="hidden" name="return_to" value="{{ return_to }}"><button type="submit" title="Снять с паузы / запустить">Старт</button></form>
+          <form method="post" action="/automation/runner/pause"><input type="hidden" name="return_to" value="{{ return_to }}"><button type="submit" title="Пауза на следующей безопасной точке">Пауза</button></form>
+          <form method="post" action="/automation/runner/resume"><input type="hidden" name="return_to" value="{{ return_to }}"><button type="submit" title="Продолжить с последней сохранённой точки">Продолжить</button></form>
+          <form method="post" action="/automation/runner/stop-after-stage"><input type="hidden" name="return_to" value="{{ return_to }}"><button type="submit" title="Остановить после текущего этапа">Стоп-этап</button></form>
+          <form method="post" action="/automation/runner/emergency-stop" class="full-width" onsubmit="return confirm('Экстренная остановка немедленно прервёт текущий процесс Claude на вашем компьютере. Продолжить?');">
+            <input type="hidden" name="return_to" value="{{ return_to }}">
+            <input type="hidden" name="confirm" value="true">
+            <button type="submit" class="danger full-width" title="Требует подтверждения. Прерывает немедленно.">Экстренная остановка</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="sidebar-block">
+        <h3>Разделы</h3>
+        <div class="sidebar-links">
+          <a href="/assets">Assets</a>
+          <a href="/skills">Skills</a>
+          <a href="/automation">Automation details</a>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-command">
+      <div class="command-hero">
+        <h1>Что поручить компании?</h1>
+        <form method="post" action="/tasks" id="task-form" enctype="multipart/form-data">
+          <div class="command-box">
+            <textarea name="request_text" id="request-text" rows="3" placeholder="Опишите, что должна сделать компания… (можно перетащить .zip/.pdf слайдов прямо сюда)" required></textarea>
+            <div class="command-toolbar">
+              <div class="command-toolbar-left">
+                <select name="project_id" id="project-select">
+                  {% for p in projects %}
+                  <option value="{{ p.id }}">{{ p.name }}</option>
+                  {% endfor %}
+                </select>
+                <input type="file" name="attachment" id="attachment-input" accept=".zip,.pdf">
+                <span id="attachment-note" style="font-size: 0.8rem; color: var(--success);"></span>
+              </div>
+              <button type="submit" id="submit-btn" class="command-submit">Отправить задачу</button>
+            </div>
+          </div>
+          <p class="working-note">Компания выполняет вашу задачу — это может занять несколько секунд, пока сотрудники готовят и проверяют работу.</p>
+        </form>
+        <p class="command-hint">Это форма постановки задачи (ProductTask), не живой чат — Orchestrator ещё не поддерживает диалог в реальном времени.</p>
+      </div>
+
+      {% if last_task %}
+      <div class="last-task-card card">
+        <div class="label">Последняя задача &middot; #{{ last_task.id }}</div>
+        <p style="margin:0.3rem 0;">{{ last_task.request_text }}</p>
+        <p style="margin:0;">
+          <span class="status-{{ last_task.status }}">{{ last_task.status }}</span>
+          &middot; <a href="/tasks/{{ last_task.id }}">открыть отчёт &rarr;</a>
+        </p>
+      </div>
+      {% endif %}
+    </main>
+  </div>
 
   <script>
     (function () {
@@ -165,7 +144,7 @@
       // attachment was found. Route a drop here into the real file input.
       function describeAttachment() {
         var file = attachmentInput.files[0];
-        attachmentNote.textContent = file ? ('Attached: ' + file.name) : '';
+        attachmentNote.textContent = file ? ('Прикреплено: ' + file.name) : '';
       }
       attachmentInput.addEventListener('change', describeAttachment);
       ['dragover', 'drop'].forEach(function (evtName) {
@@ -192,7 +171,7 @@
         // request_text from every real browser submission (curl-based
         // testing never caught it, since it doesn't run this script).
         textarea.readOnly = true;
-        btn.innerHTML = '<span class="spinner"></span> Company is working...';
+        btn.innerHTML = '<span class="spinner"></span> Компания работает…';
       });
     })();
   </script>
