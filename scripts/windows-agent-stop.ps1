@@ -7,6 +7,8 @@
 
 $taskName = "EgoOS-WindowsRunnerAgent"
 $lockFile = "$env:LOCALAPPDATA\EgoOS\claude-runner\ego-os-windows-agent.lock"
+$legacyLockFile = "$env:LOCALAPPDATA\ego-os-windows-agent.lock"
+if (-not (Test-Path $lockFile) -and (Test-Path $legacyLockFile)) { $lockFile = $legacyLockFile }
 
 Write-Host "Disabling scheduled task '$taskName' (prevents auto-restart at next login)..."
 Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue

@@ -31,7 +31,7 @@ const CLAIM_INTERVAL_MS = Number(process.env.EGO_OS_AGENT_CLAIM_INTERVAL_MS) || 
 const MAX_TURNS = Number(process.env.EGO_OS_AGENT_MAX_TURNS) || 80;
 const TIMEOUT_MINUTES = Number(process.env.EGO_OS_AGENT_TIMEOUT_MINUTES) || 90;
 
-const AGENT_LOCK = path.join(path.dirname(runner.LOCK), "ego-os-windows-agent.lock");
+const AGENT_LOCK = path.join(path.dirname(runner.CONTROL_DIR), "ego-os-windows-agent.lock");
 const AGENT_ID_FILE = path.join(runner.CONTROL_DIR, "agent_id.txt");
 
 // --- seq: a strictly-increasing per-process counter, seeded from the
