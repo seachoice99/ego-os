@@ -1,0 +1,50 @@
+{
+  "id": "RUNNER-FALSE-AUTH-001",
+  "status": "testing",
+  "priority": "P1",
+  "title": "Fix false-positive waiting_for_auth from session_manager.js's fatal-pattern scan",
+  "prompt": "automation/session_manager.js's classifySessionOutcome() runs FATAL_PATTERNS (including the authentication_required patterns) against the ENTIRE combined stdout+stderr transcript of a claude -p --output-format stream-json session. Live defect observed on AGENT-VERIFY (2026-07-12): the session read this repository's own README.md via a Read tool call, and README.md quotes the exact historical phrase 'disabled Claude subscription access' as a documented example of a past incident. That quoted text arrives on stdout wrapped inside a type:\"user\" stream-json event's tool_result content -- indistinguishable, under a naive full-text regex scan, from the CLI's own real error output. The runner's fail-closed guard (by design: a recognized fatal pattern must win over any self-reported done status) then forced the task from an already-completed, already-pushed state back to waiting_for_auth, even though no real authentication failure occurred and the implementation + final metadata commits were already on origin/main. Fix: restrict fatal-pattern scanning (auth/subscription AND the other FATAL_PATTERNS categories -- permission_denied, model_unavailable, network_failure -- the same false-positive risk applies to all of them) to only text the Claude CLI itself actually generated about its own operation: the process's real stderr stream in full (never tool output), plus stdout lines that parse as JSON with type in {\"system\",\"result\"} (the CLI's own init/error and final-verdict events) -- never type:\"user\" (wraps arbitrary tool_result content: file reads, command/grep output, all untrusted) or type:\"assistant\" (the model's own generated text, which can just as easily quote or discuss the phrase without a real failure). Do not weaken real auth/subscription-failure detection: a genuine CLI-emitted signal (real stderr text, or a system/result stream-json event containing the phrase) must still classify as auth_required and must still win over a self-reported done status, exactly as before. Rate-limit detection (detectRateLimit, already based on a structured rate_limit_event JSON line plus a narrow text fallback) is unrelated to this defect and must keep scanning the full combined stdout+stderr exactly as before -- do not restrict its scan scope.",
+  "acceptance": [
+    "A README/doc-quoted occurrence of the fatal-pattern phrase arriving as ordinary tool_result content on stdout (type:\"user\") no longer produces auth_required / waiting_for_auth",
+    "A genuine CLI-emitted auth/subscription-failure signal (real stderr, or a type:\"system\"/type:\"result\" stream-json event) still produces auth_required and still overrides a self-reported done status, unchanged from before",
+    "An ordinary successful session (clean exit, status done, no fatal signal anywhere trusted) still resolves to the done action, unchanged",
+    "Rate-limit detection (detectRateLimit / the rate_limited outcome) is unaffected and still works exactly as before, including alongside unrelated tool_result content that happens to quote the auth phrase",
+    "node --test and pytest both still pass in full",
+    "No production deploy attempted",
+    "Diff and test results are presented to the Owner; no commit or push happens without a separate, explicit Owner confirmation"
+  ],
+  "allowed_paths": [
+    "automation/session_manager.js",
+    "automation/session_manager.test.js",
+    "tasks/queue/RUNNER-FALSE-AUTH-001.yaml"
+  ],
+  "forbidden_paths": [
+    "ego_os/",
+    "tests/",
+    "automation/claude_task_runner.js",
+    "automation/runner_control.js",
+    "automation/control_server.js",
+    "automation/windows_agent.js",
+    "automation/web/"
+  ],
+  "risks": [],
+  "owner_approved": true,
+  "release": "no_deploy",
+  "result": {
+    "note": "Executed directly by the Owner's interactive Claude Code session (not the autonomous claude_task_runner.js queue), per explicit Owner instruction to hold commit/push for separate confirmation -- the runner's own execute() flow has no such hold-before-push mode, so this task deliberately did not go through the queue/watch loop.",
+    "summary": "session_manager.js's classifySessionOutcome() no longer scans the full stdout+stderr transcript for FATAL_PATTERNS. Added trustedFatalScanText(): fatal-pattern matching is now restricted to (1) real stderr in full, (2) stdout lines that parse as JSON with type 'system' or 'result' (the CLI's own operational events), and (3) raw stdout lines that fail to parse as JSON at all (the CLI breaking --output-format stream-json's own one-object-per-line contract to print an out-of-band message -- the exact shape the historical defect was captured in, per fake_claude.js's auth_disabled_exit_zero fixture). Never trusted: type 'user' (tool_result -- arbitrary file/command content) or type 'assistant' (model-generated text), both of which can legitimately quote or discuss the phrase without a real failure, as happened on AGENT-VERIFY. detectRateLimit's scan scope is untouched.",
+    "changed_files": [
+      "automation/session_manager.js",
+      "automation/session_manager.test.js",
+      "tasks/queue/RUNNER-FALSE-AUTH-001.yaml"
+    ],
+    "tests": {
+      "node --test": "189 pass, 0 fail (automation/*.test.js; 44 in session_manager.test.js alone, including 10 new/updated for this fix)",
+      "pytest": "247 passed (unaffected -- no ego_os/ or tests/ files touched)"
+    },
+    "deployed": false,
+    "committed": false,
+    "pushed": false,
+    "awaiting_owner_confirmation_for": "commit and push, per explicit Owner instruction in this task's directing prompt"
+  }
+}

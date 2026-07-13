@@ -183,6 +183,89 @@ function classifyFatalOutput(text) {
   return null;
 }
 
+// RUNNER-FALSE-AUTH-001: live defect -- AGENT-VERIFY's own session read this
+// repository's README.md (via a Read tool call), which quotes this exact
+// FATAL_PATTERNS phrase verbatim as a documented historical incident. That
+// quoted text arrives on stdout wrapped inside a type:"user" stream-json
+// event's tool_result content (--output-format stream-json, see
+// claudeInvocationArgs below) -- indistinguishable, under a naive full-text
+// scan, from the CLI's own real error output. The fail-closed guard then
+// forced an already-completed, already-pushed task back to waiting_for_auth
+// with no real auth failure having occurred.
+//
+// Fix: fatal-pattern scanning only ever looks at text the Claude CLI itself
+// generated about its own operation, never at content the session merely
+// read, produced, or discussed. Three sources are trusted:
+//   1. The process's real stderr stream, in full -- the CLI's own
+//      diagnostic channel; tool output never lands there.
+//   2. stdout lines that parse as JSON with type "system" (the CLI's own
+//      init/error events) or "result" (its final verdict for the whole
+//      invocation).
+//   3. stdout lines that DO NOT parse as JSON at all. --output-format
+//      stream-json is a strict contract: every line is exactly one
+//      complete JSON object. Tool output (file reads, command/grep
+//      results) can only ever reach stdout properly JSON-escaped inside a
+//      type:"user" tool_result field -- it can never appear as a bare,
+//      unwrapped line, because that would break the very JSON object it's
+//      embedded in. A line that fails to parse therefore means the CLI
+//      itself broke its own line-per-JSON-object contract to print
+//      something out-of-band -- exactly how the real historical defect
+//      this guard exists for was observed (see
+//      automation/test_fixtures/fake_claude.js's auth_disabled_exit_zero
+//      scenario, which reproduces it as a raw unwrapped stdout line).
+// Never trusted: type "user" (wraps arbitrary tool_result content) and
+// type "assistant" (the model's own generated text, which can just as
+// easily quote or discuss the phrase without a real failure) -- both are
+// well-formed JSON, just not a source the CLI uses for its own operational
+// signals. A genuine CLI-emitted signal still reaches one of the three
+// trusted sources above unchanged, so real detection is not weakened.
+const TRUSTED_STDOUT_EVENT_TYPES = new Set(["system", "result"]);
+
+function parseStreamJsonLines(stdout) {
+  if (!stdout) return [];
+  const events = [];
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const evt = JSON.parse(trimmed);
+      if (evt && typeof evt === "object") events.push(evt);
+    } catch {
+      // Not a JSON line -- a stray partial write, or genuinely non-JSON
+      // stdout. Excluded from parseStreamJsonLines (a pure "give me the
+      // structured events" utility), but see trustedFatalScanText below,
+      // which treats exactly this case as a trusted signal in its own
+      // right for the fail-closed guard.
+    }
+  }
+  return events;
+}
+
+// The only text classifyFatalOutput is ever allowed to see for the
+// fail-closed guard: real stderr in full, the CLI's own trusted stdout
+// event types re-serialized (so a message/result/error string nested
+// anywhere inside one of those events is still matched), and any raw
+// non-JSON stdout line (see the rationale above -- this is trusted, not
+// excluded, unlike parseStreamJsonLines's own default).
+function trustedFatalScanText(stdout, stderr) {
+  const trustedLines = [];
+  for (const line of (stdout || "").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let evt;
+    try {
+      evt = JSON.parse(trimmed);
+    } catch {
+      trustedLines.push(trimmed); // raw, unwrapped CLI output -- trusted
+      continue;
+    }
+    if (evt && typeof evt === "object" && TRUSTED_STDOUT_EVENT_TYPES.has(evt.type)) {
+      trustedLines.push(JSON.stringify(evt));
+    }
+  }
+  return `${trustedLines.join("\n")}\n${stderr || ""}`;
+}
+
 // --- Session outcome classification -----------------------------------
 
 // Distinguishes why a spawned session ended, from the runner's own
@@ -192,11 +275,18 @@ function classifyFatalOutput(text) {
 // all, but also permission/model/network) must never be classified as
 // exited_clean, no matter the exit code.
 function classifySessionOutcome({ status, signal, stdout, stderr }) {
-  const combined = `${stdout || ""}\n${stderr || ""}`;
-  const fatal = classifyFatalOutput(combined);
+  // Fatal-pattern scanning (RUNNER-FALSE-AUTH-001): only real stderr and the
+  // CLI's own trusted stdout event types, never ordinary tool_result/
+  // assistant content -- see trustedFatalScanText above.
+  const fatal = classifyFatalOutput(trustedFatalScanText(stdout, stderr));
   if (fatal && fatal.category === "authentication_required") {
     return { outcome: "auth_required", fatal };
   }
+  // Rate-limit detection is unrelated to RUNNER-FALSE-AUTH-001 and keeps
+  // scanning the full combined transcript exactly as before -- it already
+  // requires either a structured rate_limit_event JSON line (which a
+  // quoted doc excerpt cannot reproduce) or a narrow plain-text fallback.
+  const combined = `${stdout || ""}\n${stderr || ""}`;
   const rateLimit = detectRateLimit(combined);
   if (rateLimit) return { outcome: "rate_limited", rateLimit };
   if (fatal) return { outcome: "exited_error", status, fatal };
@@ -287,6 +377,8 @@ module.exports = {
   estimatePromptSize,
   FATAL_PATTERNS,
   classifyFatalOutput,
+  parseStreamJsonLines,
+  trustedFatalScanText,
   classifySessionOutcome,
   decideNextAction,
   claudeInvocationArgs,

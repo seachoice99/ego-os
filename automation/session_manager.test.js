@@ -16,6 +16,8 @@ const {
   buildHandoffBlock,
   estimatePromptSize,
   classifyFatalOutput,
+  parseStreamJsonLines,
+  trustedFatalScanText,
   classifySessionOutcome,
   decideNextAction,
   claudeInvocationArgs,
@@ -298,19 +300,108 @@ test("classifyFatalOutput returns null for ordinary, non-fatal output", () => {
   assert.equal(classifyFatalOutput("Wrote 3 files. Tests passed. Committed abc123."), null);
 });
 
-test("classifySessionOutcome reports auth_required for the subscription message even with a clean (status 0) exit", () => {
-  const stdout = "some normal turns...\nYour organization has disabled Claude subscription access for Claude Code. Use an Anthropic API key instead, or ask your admin to enable access\n";
+test("classifySessionOutcome reports auth_required for the subscription message even with a clean (status 0) exit -- real signal via stderr", () => {
+  // Real stderr is the CLI's own diagnostic channel, never tool output --
+  // one of the two trusted sources RUNNER-FALSE-AUTH-001 keeps scanning.
+  const stdout = '{"type":"result","subtype":"success","is_error":false,"result":"done"}\n';
+  const stderr = "Your organization has disabled Claude subscription access for Claude Code. Use an Anthropic API key instead, or ask your admin to enable access\n";
+  const result = classifySessionOutcome({ status: 0, signal: null, stdout, stderr });
+  assert.equal(result.outcome, "auth_required");
+  assert.equal(result.fatal.category, "authentication_required");
+});
+
+test("classifySessionOutcome reports auth_required for a genuine CLI-emitted stream-json result event, even embedded in a larger transcript", () => {
+  // The CLI's own final "result" event is the other trusted source -- this
+  // models a real auth failure surfacing structurally rather than via stderr.
+  const stdout = [
+    '{"type":"system","subtype":"init","cwd":"/repo"}',
+    '{"type":"assistant","message":{"content":[{"type":"text","text":"Starting work..."}]}}',
+    '{"type":"result","subtype":"error","is_error":true,"result":"disabled Claude subscription access for Claude Code"}',
+  ].join("\n");
   const result = classifySessionOutcome({ status: 0, signal: null, stdout, stderr: "" });
   assert.equal(result.outcome, "auth_required");
   assert.equal(result.fatal.category, "authentication_required");
+});
+
+test("RUNNER-FALSE-AUTH-001: a README/doc quote of the phrase arriving as ordinary tool_result content on stdout does NOT produce auth_required -- the exact live false positive", () => {
+  // Models the real AGENT-VERIFY defect: a Read tool call returns file
+  // content (here, a README excerpt) that quotes the historical incident
+  // phrase verbatim. That content is wrapped in a type:"user" event's
+  // tool_result -- untrusted, and must never be scanned.
+  const readmeExcerpt = "A real defect motivated this fail-closed guard: a child Claude process can print \"Your organization has disabled Claude subscription access for Claude Code...\" and still exit 0.";
+  const stdout = [
+    '{"type":"system","subtype":"init","cwd":"/repo"}',
+    JSON.stringify({
+      type: "user",
+      message: { role: "user", content: [{ tool_use_id: "toolu_1", type: "tool_result", content: readmeExcerpt, is_error: false }] },
+    }),
+    '{"type":"assistant","message":{"content":[{"type":"text","text":"Documented, moving on."}]}}',
+    '{"type":"result","subtype":"success","is_error":false,"result":"done"}',
+  ].join("\n");
+  const result = classifySessionOutcome({ status: 0, signal: null, stdout, stderr: "" });
+  assert.notEqual(result.outcome, "auth_required");
+  assert.equal(result.outcome, "exited_clean");
+});
+
+test("RUNNER-FALSE-AUTH-001: an ordinary successful session with unrelated tool_result content still resolves to done via decideNextAction", () => {
+  const readmeExcerpt = "A real defect motivated this fail-closed guard: \"disabled Claude subscription access\" and still exit 0.";
+  const stdout = [
+    JSON.stringify({ type: "user", message: { role: "user", content: [{ tool_use_id: "toolu_1", type: "tool_result", content: readmeExcerpt, is_error: false }] } }),
+    '{"type":"result","subtype":"success","is_error":false,"result":"done"}',
+  ].join("\n");
+  const outcome = classifySessionOutcome({ status: 0, signal: null, stdout, stderr: "" });
+  const result = decideNextAction({ ...BASE_DECISION_INPUT, sessionOutcome: outcome, taskStatus: "done", workingTreeClean: true, finalSyncOk: { ok: true }, processExitedZero: true });
+  assert.equal(result.action, "done");
+});
+
+test("parseStreamJsonLines skips non-JSON/blank lines and keeps only valid JSON objects", () => {
+  const stdout = '{"type":"system"}\n\nnot json at all\n{"type":"result","ok":true}\n';
+  const events = parseStreamJsonLines(stdout);
+  assert.deepEqual(events.map((e) => e.type), ["system", "result"]);
+});
+
+test("trustedFatalScanText includes stderr, raw non-JSON stdout lines, and only system/result stdout events -- excluding user/assistant", () => {
+  const stdout = [
+    '{"type":"user","message":{"content":[{"type":"tool_result","content":"secret-marker-in-tool-output"}]}}',
+    '{"type":"assistant","message":{"content":[{"type":"text","text":"secret-marker-in-assistant-text"}]}}',
+    '{"type":"system","subtype":"init"}',
+    '{"type":"result","result":"secret-marker-in-result"}',
+    "secret-marker-in-raw-unwrapped-line", // not valid JSON -- how the real historical defect surfaced
+  ].join("\n");
+  const scanned = trustedFatalScanText(stdout, "secret-marker-in-stderr");
+  assert.ok(!scanned.includes("secret-marker-in-tool-output"));
+  assert.ok(!scanned.includes("secret-marker-in-assistant-text"));
+  assert.ok(scanned.includes("secret-marker-in-result"));
+  assert.ok(scanned.includes("secret-marker-in-stderr"));
+  assert.ok(scanned.includes("secret-marker-in-raw-unwrapped-line"));
+});
+
+test("classifySessionOutcome reports auth_required for a raw, unwrapped plain-text stdout line (the exact historically-observed shape, see fake_claude.js's auth_disabled_exit_zero)", () => {
+  const stdout = "Your organization has disabled Claude subscription access for Claude Code. Use an Anthropic API key instead, or ask your admin to enable access\n";
+  const result = classifySessionOutcome({ status: 0, signal: null, stdout, stderr: "" });
+  assert.equal(result.outcome, "auth_required");
+  assert.equal(result.fatal.category, "authentication_required");
+});
+
+test("RUNNER-FALSE-AUTH-001: rate-limit detection is unaffected, including alongside unrelated tool_result content quoting the auth phrase", () => {
+  const readmeExcerpt = "History: \"disabled Claude subscription access\" was a real past incident.";
+  const stdout = [
+    JSON.stringify({ type: "user", message: { role: "user", content: [{ tool_use_id: "toolu_1", type: "tool_result", content: readmeExcerpt }] } }),
+    '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":9999999999,"rateLimitType":"five_hour"}}',
+  ].join("\n");
+  const result = classifySessionOutcome({ status: 1, signal: null, stdout, stderr: "" });
+  assert.equal(result.outcome, "rate_limited");
 });
 
 test("decideNextAction: the exact live defect -- subscription-disabled message with exit 0 and self-reported done must NOT be 'done'", () => {
   const outcome = classifySessionOutcome({
     status: 0,
     signal: null,
-    stdout: "Your organization has disabled Claude subscription access for Claude Code. Use an Anthropic API key instead, or ask your admin to enable access",
-    stderr: "",
+    stdout: '{"type":"result","subtype":"success","is_error":false,"result":"done"}',
+    // Real signal via stderr (the CLI's own diagnostic channel) -- see
+    // RUNNER-FALSE-AUTH-001: this must NOT be findable via ordinary
+    // tool_result/assistant stdout content, only via a trusted source.
+    stderr: "Your organization has disabled Claude subscription access for Claude Code. Use an Anthropic API key instead, or ask your admin to enable access",
   });
   const result = decideNextAction({
     ...BASE_DECISION_INPUT,
@@ -326,7 +417,7 @@ test("decideNextAction: the exact live defect -- subscription-disabled message w
 });
 
 test("decideNextAction: a non-auth fatal pattern (e.g. permission denied) also never becomes 'done', even with a clean exit", () => {
-  const outcome = classifySessionOutcome({ status: 0, signal: null, stdout: "Error: Permission denied writing to /etc/", stderr: "" });
+  const outcome = classifySessionOutcome({ status: 0, signal: null, stdout: "", stderr: "Error: Permission denied writing to /etc/" });
   const result = decideNextAction({
     ...BASE_DECISION_INPUT,
     sessionOutcome: outcome,
