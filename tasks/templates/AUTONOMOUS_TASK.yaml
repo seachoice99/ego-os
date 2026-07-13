@@ -4,6 +4,12 @@
   "priority": "P2",
   "title": "Replace with a concrete outcome",
   "prompt": "Explain exactly what Claude must implement and what is out of scope.",
+  "executor": "claude",
+  "preferred_model": null,
+  "fallback_executor": null,
+  "context_budget": null,
+  "model_tier": null,
+  "review_executor": null,
   "acceptance": [
     "Add an objective, machine-verifiable acceptance criterion."
   ],
