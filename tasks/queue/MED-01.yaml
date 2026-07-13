@@ -1,6 +1,6 @@
 {
   "id": "MED-01",
-  "status": "ready",
+  "status": "done",
   "priority": "P1",
   "title": "Multi-Executor Dispatch: Codex CLI recon (read-only)",
   "display_summary": "Проверяем, что вообще умеет Codex, ничего не ломая",
@@ -26,5 +26,17 @@
   "release": "no_deploy",
   "depends_on": [],
   "estimated_minutes": 30,
-  "result": null
+  "result": {
+    "sessions": [],
+    "changed_files": [
+      "automation/CODEX_CLI_FINDINGS.md"
+    ],
+    "summary": "Confirmed via `where codex`, `command -v codex` (Git Bash), and PowerShell Get-Command that the OpenAI Codex CLI is not installed on this machine. No non-interactive-mode probing was possible as a result. Documented the official install commands (Windows PowerShell installer, macOS/Linux curl installer, npm, Homebrew, GitHub release binaries) sourced live from OpenAI's own docs (learn.chatgpt.com/docs/codex/cli) and the openai/codex GitHub repo README during this session, and flagged owner-approved installation (method + host + auth/subscription) as an explicit prerequisite for MED-02. No install was performed; no other files were created or modified.",
+    "tests": {
+      "note": "No code was changed (documentation-only recon file); no pytest/node test run applicable or required."
+    },
+    "commit": "a3a5989"
+  },
+  "started_at": "2026-07-13T07:59:10.261Z",
+  "completed_at": "2026-07-13T11:05:00.000Z"
 }
