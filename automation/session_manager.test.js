@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 
 const {
   HANDOFF_WORD_LIMIT,
+  validateTaskExecutor,
   countWords,
   handoffWordCount,
   validateHandoff,
@@ -32,6 +33,24 @@ const VALID_HANDOFF = {
   risks: "none identified",
   next_step: "wire up GET /assets",
 };
+
+// --- executor validation -------------------------------------------------
+
+test("validateTaskExecutor preserves the current absent/claude/auto behavior", () => {
+  assert.deepEqual(validateTaskExecutor(undefined), { ok: true, executor: "claude" });
+  assert.deepEqual(validateTaskExecutor("claude"), { ok: true, executor: "claude" });
+  assert.deepEqual(validateTaskExecutor("auto"), { ok: true, executor: "auto" });
+});
+
+test("validateTaskExecutor rejects schema-valid future and unknown executors fail-closed", () => {
+  for (const executor of ["codex", "openrouter_free", "unknown", null]) {
+    const result = validateTaskExecutor(executor);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /task\.executor/);
+    assert.match(result.reason, new RegExp(String(executor)));
+    assert.match(result.reason, /no implemented runtime path/);
+  }
+});
 
 // --- handoff validation ---------------------------------------------------
 

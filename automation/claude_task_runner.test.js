@@ -114,7 +114,42 @@ function isAlive(pid) {
   }
 }
 
+async function assertExecutorRejectedWithoutSpawn(executor) {
+  const { runner, localDir } = freshRunnerEnv();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ego-os-task-"));
+  const selected = writeTask(dir, { id: `TEST-EXECUTOR-${executor.toUpperCase()}`, executor });
+  const originalSpawn = cp.spawn;
+  let spawnCount = 0;
+  cp.spawn = (...args) => {
+    spawnCount += 1;
+    return originalSpawn(...args);
+  };
+
+  try {
+    const ok = await runner.execute(selected, 10, 1);
+    assert.equal(ok, false);
+    assert.equal(spawnCount, 0, "executor validation must refuse before fake Claude is spawned");
+    const finalTask = runner.load(selected.file);
+    assert.equal(finalTask.status, "failed");
+    assert.match(finalTask.result.runner_error, /task\.executor/);
+    assert.match(finalTask.result.runner_error, new RegExp(executor));
+    assert.equal(finalTask.result.sessions, undefined, "a rejected executor must create no session record");
+  } finally {
+    cp.spawn = originalSpawn;
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(localDir, { recursive: true, force: true });
+  }
+}
+
 // --- 1. a new task never inherits an old session --------------------------
+
+test("execute() rejects executor:'codex' before spawning the fake Claude process", async () => {
+  await assertExecutorRejectedWithoutSpawn("codex");
+});
+
+test("execute() rejects executor:'openrouter_free' before spawning the fake Claude process", async () => {
+  await assertExecutorRejectedWithoutSpawn("openrouter_free");
+});
 
 test("execute() never passes --continue or --resume, and each stage/task starts an independent fake session", async () => {
   const { runner, localDir } = freshRunnerEnv();

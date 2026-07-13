@@ -20,6 +20,23 @@ const DEFAULT_MAX_AUTO_STAGES = 4;
 const HANDOFF_WORD_LIMIT = 1500;
 const HANDOFF_REQUIRED_FIELDS = ["summary", "commit", "changed_files", "checks", "remaining", "risks", "next_step"];
 
+// RCI-02: task YAML may already name future executors, but the runner must
+// never silently route one of those tasks through today's Claude-only
+// implementation. Keep this decision pure so schema/runtime drift is
+// directly testable without spawning any process.
+function validateTaskExecutor(value) {
+  const executor = value === undefined ? "claude" : value;
+  if (executor === "claude" || executor === "auto") {
+    return { ok: true, executor };
+  }
+  const rendered = JSON.stringify(executor) ?? String(executor);
+  return {
+    ok: false,
+    executor,
+    reason: `task.executor ${rendered} has no implemented runtime path`,
+  };
+}
+
 function countWords(text) {
   const trimmed = String(text ?? "").trim();
   return trimmed ? trimmed.split(/\s+/).length : 0;
@@ -365,6 +382,7 @@ module.exports = {
   DEFAULT_MAX_AUTO_STAGES,
   HANDOFF_WORD_LIMIT,
   HANDOFF_REQUIRED_FIELDS,
+  validateTaskExecutor,
   countWords,
   handoffWordCount,
   validateHandoff,

@@ -19,6 +19,7 @@ const {
   classifySessionOutcome,
   decideNextAction,
   claudeInvocationArgs,
+  validateTaskExecutor,
 } = require("./session_manager.js");
 const {
   commandAllowedInState,
@@ -488,6 +489,13 @@ async function execute(selected, cliMaxTurns, cliTimeoutMinutes) {
   const risks = new Set(task.risks || []);
   if ([...risks].some(x => OWNER_ONLY.has(x)) && task.owner_approved !== true) {
     task.status = "blocked"; task.result = { error: "Owner-only risk lacks owner_approved: true" }; save(file, task); return false;
+  }
+  const executorCheck = validateTaskExecutor(task.executor);
+  if (!executorCheck.ok) {
+    task.status = "failed";
+    task.result = { ...(task.result || {}), runner_error: executorCheck.reason };
+    save(file, task);
+    return false;
   }
   if (!["automatic", "no_deploy"].includes(task.release)) throw new Error("release must be automatic or no_deploy");
   const [ok, detail] = await preflight();
