@@ -27,7 +27,19 @@
   "depends_on": [],
   "estimated_minutes": 30,
   "result": {
-    "sessions": [],
+    "sessions": [
+      {
+        "stage": 1,
+        "model": "default",
+        "started_at": "2026-07-13T07:59:10.375Z",
+        "duration_ms": 173080,
+        "prompt_chars": 5206,
+        "prompt_approx_tokens": 1302,
+        "handoff_words": 157,
+        "outcome": "exited_clean",
+        "log": "C:\\Users\\user\\AppData\\Local\\EgoOS\\claude-runner\\logs\\2026-07-13T07-59-10-375Z-MED-01-stage1.log"
+      }
+    ],
     "changed_files": [
       "automation/CODEX_CLI_FINDINGS.md"
     ],
