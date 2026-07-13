@@ -1,6 +1,6 @@
 {
   "id": "RCI-01",
-  "status": "blocked",
+  "status": "done",
   "priority": "P2",
   "title": "Runner Integration: document new optional task-model fields",
   "prompt": "Extend tasks/templates/AUTONOMOUS_TASK.yaml and tasks/queue/README.md to document six new OPTIONAL task fields per architecture/015_RUNNER_OPERATIONS_INTEGRATION.md and architecture/017_MULTI_EXECUTOR_DISPATCH.md: executor (claude|codex|auto|openrouter_free, default 'claude' when absent), preferred_model, fallback_executor, context_budget, model_tier (free|standard|strong, used only when executor is 'auto'), review_executor (an executor that must independently review before 'done', per ADR-0010 principle 5 and ADR-0012). Note explicitly that per-stage wall-clock timing continues to use the EXISTING max_duration_minutes field (TOKEN-EFFICIENCY-001) -- this integration does not add a second, confusingly similar timing field. This is a documentation-only task -- no runtime code changes.",
@@ -26,5 +26,18 @@
   "release": "no_deploy",
   "depends_on": [],
   "estimated_minutes": 30,
-  "result": null
+  "result": {
+    "changed_files": [
+      "tasks/templates/AUTONOMOUS_TASK.yaml",
+      "tasks/queue/README.md"
+    ],
+    "summary": "Documented all six optional multi-executor task fields, their defaults and fail-closed semantics, backward compatibility for existing task YAMLs, the authoritative tier 0/1/2 table link, and max_duration_minutes as the sole per-stage wall-clock field.",
+    "tests": {
+      "template_parse": "passed",
+      "diff_check": "passed",
+      "note": "Documentation-only task; no runtime code changed."
+    },
+    "commit": "f6a2169"
+  },
+  "completed_at": "2026-07-13T10:48:19.585Z"
 }
