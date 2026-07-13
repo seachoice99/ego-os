@@ -1,6 +1,6 @@
 {
   "id": "AGENT-VERIFY",
-  "status": "waiting_for_auth",
+  "status": "done",
   "priority": "P0",
   "title": "Verify the Windows Runner Agent end to end (VPS coordinates, Claude executes locally)",
   "prompt": "This is a small, safe, documentation-only task whose sole purpose is to prove the new Windows Runner Agent architecture works end to end: Ego OS on the VPS only coordinates the queue (it never runs Claude Code -- that path was abandoned after Claude Code was confirmed unable to run on the VPS); the Owner's own Windows machine runs a background agent that claims this task over outbound HTTPS, executes it locally with the Owner's already-authenticated Claude Code, then commits and pushes the result. Create automation/WINDOWS_AGENT_VERIFICATION.md documenting: (1) control_server.js on the VPS never executes Claude and only coordinates via /api/agent/* (register, heartbeat, claim, report-state, report-checkpoint, report-result, request-deploy), each authenticated by a separate machine token (never Owner Basic Auth); (2) the Windows Agent runs as a Task Scheduler background task on the Owner's machine, polls the VPS over outbound HTTPS only, and mirrors any pause/stop/emergency command into the exact same local commands.json the existing runner already reads; (3) this task's own execution is the live proof. Include the literal marker WINDOWS_AGENT_VERIFIED somewhere in the file. Read the file back from disk and confirm the marker is present before finishing. Touch no other file besides this one and this task's own YAML. Do not touch ego_os/, tests/, or any other automation/ file. Run the existing test suites (node --test and pytest) and confirm both still pass. Commit (message starting 'AGENT-VERIFY:'), push to origin/main. release is no_deploy -- do not deploy, do not touch production /opt/ego-os. Record status done with a summary and commit hash, then make a separate final metadata commit of just this task's own YAML, push it too.",
@@ -60,7 +60,9 @@
     "deployed": false,
     "auth_error": {
       "category": "authentication_required",
-      "matched": "disabled Claude subscription access"
+      "matched": "disabled Claude subscription access",
+      "false_positive": true,
+      "false_positive_note": "session_manager.js's FATAL_PATTERNS regex matched a quoted historical-incident example inside README.md that the session read for context, not a real auth/subscription failure. The implementation commit (ab57652) and final metadata commit (deae20a) were already made and pushed to origin/main before this misclassification fired. Verified 2026-07-13: marker present on disk, both commits on origin/main, no auth issue reproducible. Status corrected from waiting_for_auth back to done without re-running the task."
     },
     "finished_at": "2026-07-12T15:51:25.116Z"
   },
