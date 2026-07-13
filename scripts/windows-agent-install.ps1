@@ -63,9 +63,10 @@ if ($existing) {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
 }
 
-$wrapperPath = Join-Path $repoRoot "scripts\windows-agent-run-hidden.ps1"
-$action = New-ScheduledTaskAction -Execute "powershell.exe" `
-    -Argument "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$wrapperPath`"" `
+$nodePath = (Get-Command node -ErrorAction Stop).Source
+$launcherPath = Join-Path $repoRoot "scripts\windows-agent-launcher.js"
+$action = New-ScheduledTaskAction -Execute $nodePath `
+    -Argument "`"$launcherPath`"" `
     -WorkingDirectory $repoRoot
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 $settings = New-ScheduledTaskSettingsSet `
