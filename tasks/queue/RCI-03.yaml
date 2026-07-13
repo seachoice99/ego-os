@@ -28,5 +28,14 @@
   "release": "no_deploy",
   "depends_on": ["RCI-01", "RCI-02"],
   "estimated_minutes": 90,
-  "result": null
+  "result": {
+    "summary": "Blocked before implementation because this task's ADR-0009-era acceptance criteria are superseded by the current ADR-0013 topology already implemented in the checkout. ego_os/automation_bridge.py and ego_os/agent_routes.py intentionally use the fixed loopback control-server port and hardened POST allowlists for the live Dashboard/Windows Agent control plane.",
+    "blocker": "The task still requires grep across ego_os/ for 4756/control-server POST calls to return nothing. Meeting that stale criterion would remove the current Dashboard command plane and agent proxy. Rewrite or supersede RCI-03 against ADR-0013 before execution.",
+    "evidence": [
+      "architecture/015_RUNNER_OPERATIONS_INTEGRATION.md explicitly notes the topology update and ADR-0013 supersession",
+      "ego_os/automation_bridge.py implements validated loopback-only GET/POST calls",
+      "ego_os/agent_routes.py proxies the allowlisted Windows Agent coordination surface",
+      "GET /dashboard and /automation already render runner operations"
+    ]
+  }
 }
