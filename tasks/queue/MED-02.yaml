@@ -30,5 +30,14 @@
   "release": "no_deploy",
   "depends_on": ["RCI-02", "MED-01"],
   "estimated_minutes": 90,
-  "result": null
+  "result": {
+    "summary": "Blocked fail-closed before implementation. A current diagnostic probe now finds codex-cli 0.144.3 and verifies codex exec with --json/--sandbox/--ephemeral flags, but the task's required source automation/CODEX_CLI_FINDINGS.md still explicitly records that Codex JSONL output, rate-limit signals, and auth-failure signals were not observed. The task forbids inventing those executor-specific patterns, so its acceptance criteria cannot yet be met.",
+    "blocker": "Refresh MED-01 findings from real diagnostic Codex executions, including observed JSONL output and safe observed auth/rate-limit signal shapes, before implementing dispatch.",
+    "observed": {
+      "version": "codex-cli 0.144.3",
+      "exec_help": "verified",
+      "rate_limit_signal": "not verified",
+      "auth_failure_signal": "not verified"
+    }
+  }
 }
