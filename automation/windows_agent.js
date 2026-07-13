@@ -186,9 +186,12 @@ let stopping = false;
 async function heartbeatLoop() {
   while (!stopping) {
     try {
-      await heartbeat(currentStatusLabel);
+      const result = await heartbeat(currentStatusLabel);
+      if (!result.ok) {
+        console.error(`heartbeat rejected: ${result.status} ${(result.data && result.data.error) || result.error || ""}`);
+      }
     } catch (error) {
-      console.error(`heartbeat failed: ${error.message}`);
+      console.error(`heartbeat failed: ${error && (error.stack || error.message) || error}`);
     }
     await sleep(HEARTBEAT_INTERVAL_MS);
   }
@@ -199,28 +202,35 @@ let currentlyBusy = false;
 
 async function claimLoop() {
   while (!stopping) {
-    if (!currentlyBusy) {
-      const pending = runner.readPendingCommand();
-      const blocked = pending && (pending.command === "pause" || pending.command === "stop_after_stage");
-      if (!blocked) {
-        if (!workingTreeIsClean()) {
-          console.error("STOP: working tree is not clean (uncommitted changes present) -- refusing to claim a task until it is");
-        } else {
-          const result = await claim();
-          if (result.ok && result.data && result.data.task) {
-            currentlyBusy = true;
-            currentStatusLabel = "running";
-            try {
-              await runClaimedTask(result.data.task);
-            } finally {
-              currentlyBusy = false;
-              currentStatusLabel = "idle";
+    try {
+      if (!currentlyBusy) {
+        const pending = runner.readPendingCommand();
+        const blocked = pending && (pending.command === "pause" || pending.command === "stop_after_stage");
+        if (!blocked) {
+          if (!workingTreeIsClean()) {
+            console.error("STOP: working tree is not clean (uncommitted changes present) -- refusing to claim a task until it is");
+          } else {
+            const result = await claim();
+            if (result.ok && result.data && result.data.task) {
+              currentlyBusy = true;
+              currentStatusLabel = "running";
+              try {
+                await runClaimedTask(result.data.task);
+              } finally {
+                currentlyBusy = false;
+                currentStatusLabel = "idle";
+              }
+            } else if (!result.ok) {
+              console.error(`claim failed: ${result.status} ${(result.data && result.data.error) || result.error || ""}`);
             }
-          } else if (!result.ok) {
-            console.error(`claim failed: ${result.status} ${(result.data && result.data.error) || result.error || ""}`);
           }
         }
       }
+    } catch (error) {
+      // A transient filesystem/network/response-shape defect in the claim
+      // side must be visible and retried, never silently tear down the
+      // long-lived Windows agent after a successful registration.
+      console.error(`claim loop failed: ${error && (error.stack || error.message) || error}`);
     }
     await sleep(CLAIM_INTERVAL_MS);
   }
@@ -245,13 +255,15 @@ async function main() {
   await ensureRegistered();
   console.log(`Registered as agent_id ${agentId}`);
 
-  const cleanup = () => {
+  const cleanup = (signal) => {
+    console.error(`Agent shutdown requested by ${signal}`);
     stopping = true;
     releaseAgentLock();
     process.exit(0);
   };
-  process.on("SIGINT", cleanup);
-  process.on("SIGTERM", cleanup);
+  process.on("SIGINT", () => cleanup("SIGINT"));
+  process.on("SIGTERM", () => cleanup("SIGTERM"));
+  if (process.platform === "win32") process.on("SIGBREAK", () => cleanup("SIGBREAK"));
 
   await Promise.all([heartbeatLoop(), claimLoop()]);
   return 0;
@@ -264,5 +276,11 @@ module.exports = {
 };
 
 if (require.main === module) {
-  main().then((code) => { if (code) process.exitCode = code; });
+  main()
+    .then((code) => { if (code) process.exitCode = code; })
+    .catch((error) => {
+      console.error(`FATAL windows agent error: ${error && (error.stack || error.message) || error}`);
+      releaseAgentLock();
+      process.exitCode = 1;
+    });
 }

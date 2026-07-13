@@ -29,4 +29,6 @@ $logFile = Join-Path $logDir "windows-agent-$stamp.log"
 # (RestartCount/RestartInterval in windows-agent-install.ps1) takes over
 # from there if it exits unexpectedly.
 & node "automation\windows_agent.js" *> $logFile
-exit $LASTEXITCODE
+$nodeExitCode = $LASTEXITCODE
+Add-Content -Path $logFile -Value "WINDOWS_AGENT_PROCESS_EXIT code=$nodeExitCode at=$([DateTime]::UtcNow.ToString('o'))"
+exit $nodeExitCode
